@@ -1,0 +1,40 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Git worktrees
+.worktrees/
+
+# Environment
+.env
+.env.*
+!.env.example
+!.env.android
+
+# Frontend
+node_modules/
+.svelte-kit/
+build/
+dist/
+.vercel/
+.netlify/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+coverage/
+test-results/
+
+# Backend
+__pycache__/
+*.py[oc]
+wheels/
+*.egg-info
+.venv
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+kasir-be/media/*
+!kasir-be/media/.gitkeep

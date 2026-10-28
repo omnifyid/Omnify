@@ -1,0 +1,191 @@
+@import 'tailwindcss';
+
+/* Omnify design tokens */
+:root {
+  /* neutrals */
+  --om-ink: #10140F;
+  --om-ink-2: #3B3F38;
+  --om-text-secondary: #4A4E47;
+  --om-bg: #F6F5F1;
+  --om-surface: #FFFFFF;
+  --om-surface-sunk: #FBFAF7;
+  --om-fill-muted: #F1F0EC;
+  --om-fill-hover: #EFEEE9;
+  --om-fill-image: #EEF0EA;
+  --om-border: #E7E5DF;
+  --om-divider: #F0EEE9;
+  --om-border-strong: #D7D5CE;
+  --om-grey-tint: #EDECE7;
+
+  /* brand & status */
+  --om-brand: #1F5C12;
+  --om-brand-tint: #E6F4DF;
+  --om-brand-tint-hover: #DCEFD3;
+  --om-brand-bright: #45A02E;
+  --om-brand-soft: #EEF7EA;
+  --om-brand-soft-border: #CFE7C4;
+  --om-brand-on-dark: #7ED76A;
+  --om-warning: #6A4400;
+  --om-warning-tint: #FBF1DC;
+  --om-warning-solid: #E0A526;
+  --om-danger: #8E1A14;
+  --om-danger-tint: #FCE9E6;
+  --om-danger-solid: #D64535;
+  --om-info: #1F4A8F;
+  --om-info-tint: #EAF0FB;
+  --om-on-dark: #EAF3E6;
+  --om-on-dark-2: #A9B3A5;
+
+  /* channels */
+  --om-gofood: #9E1B2F;
+  --om-grabfood: #14633A;
+  --om-shopeefood: #9A3412;
+
+  /* overlays */
+  --om-scrim: rgba(16, 20, 15, .42);
+
+  /* type */
+  --om-font: 'Geist', system-ui, sans-serif;
+  --om-font-logo: 'JetBrains Mono', monospace;
+  --om-fs-meta: 12px;
+  --om-fs-control: 14px;
+  --om-fs-body: 16px;
+  --om-fs-title: 20px;
+  --om-fs-kpi: 24px;
+  --om-fs-display: 44px;
+
+  /* radius */
+  --om-r-xs: 6px;
+  --om-r-sm: 8px;
+  --om-r-md: 10px;
+  --om-r-input: 11px;
+  --om-r-lg: 12px;
+  --om-r-card: 14px;
+  --om-r-dialog: 18px;
+  --om-r-pill: 20px;
+  --om-r-sheet: 22px 22px 0 0;
+
+  /* shadow */
+  --om-sh-hover: 0 4px 14px rgba(16, 20, 15, .08);
+  --om-sh-popover: 0 16px 40px rgba(16, 20, 15, .14);
+  --om-sh-dialog: 0 20px 60px rgba(16, 20, 15, .25);
+  --om-sh-drawer: -12px 0 40px rgba(16, 20, 15, .15);
+  --om-sh-floating: 0 10px 24px rgba(16, 20, 15, .28);
+
+  /* layout */
+  --om-tap: 44px;
+  --om-sidebar: 244px;
+  --om-rail: 84px;
+  --om-cart: 390px;
+  --om-page-pad: 24px;
+}
+@media (max-width: 1199px) { :root { --om-tap: 48px; --om-cart: 340px; --om-page-pad: 16px; } }
+@media (max-width: 767px)  { :root { --om-page-pad: 12px; --om-cart: 100%; } }
+
+/* Legacy variable names mapped onto the Omnify palette */
+:root {
+  --cream: var(--om-surface-sunk);
+  --light-brown: var(--om-brand-tint);
+  --mid-brown: var(--om-brand-bright);
+  --warm-brown: var(--om-brand);
+  --espresso: var(--om-ink);
+  --dark: var(--om-ink);
+  --white: var(--om-surface);
+  --text-muted: var(--om-text-secondary);
+  --background: var(--om-bg);
+  --card: var(--om-surface);
+  --foreground: var(--om-ink);
+  --muted: var(--om-text-secondary);
+  --border: var(--om-border);
+  --primary: var(--om-brand);
+  --primary-hover: #174a0d;
+  --primary-light: var(--om-brand-bright);
+  --primary-pale: var(--om-brand-tint);
+  --primary-subtle: var(--om-surface-sunk);
+  --sidebar-bg: var(--om-surface-sunk);
+  --success: var(--om-brand);
+  --warning: var(--om-warning-solid);
+  --danger: var(--om-danger-solid);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--om-bg);
+  color: var(--om-ink);
+  font-family: var(--om-font);
+  font-size: 16px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+button, input, select, textarea { font-family: inherit; line-height: 1.3; }
+button { cursor: pointer; font-size: var(--om-fs-control); }
+input, select, textarea { font-size: 16px; }
+button:disabled { cursor: not-allowed; opacity: 0.5; }
+
+/* Material Symbols Rounded */
+.ms {
+  font-family: 'Material Symbols Rounded';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  display: inline-block;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  font-feature-settings: 'liga';
+  -webkit-font-feature-settings: 'liga';
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  user-select: none;
+}
+.ms.fill { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+
+.display-font { font-family: var(--om-font); letter-spacing: -0.01em; }
+.logo-font { font-family: var(--om-font-logo); font-weight: 800; letter-spacing: -0.03em; }
+
+@layer components {
+.card { border: 1px solid var(--om-border); border-radius: var(--om-r-card); background: var(--om-surface); }
+
+.btn-primary {
+  min-height: var(--om-tap);
+  border-radius: var(--om-r-lg);
+  background: var(--om-brand);
+  color: #fff;
+  padding: 0.6rem 1.15rem;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+.btn-primary:hover { background: var(--primary-hover); }
+
+.btn-outline {
+  min-height: var(--om-tap);
+  border: 1px solid var(--om-border);
+  border-radius: var(--om-r-md);
+  background: var(--om-surface);
+  color: var(--om-ink);
+  padding: 0.6rem 1.15rem;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+.btn-outline:hover { background: var(--om-fill-hover); }
+
+.field {
+  width: 100%;
+  min-height: var(--om-tap);
+  border: 1px solid var(--om-border-strong);
+  border-radius: var(--om-r-input);
+  background: var(--om-surface);
+  padding: 0.65rem 0.9rem;
+  outline: none;
+}
+.field:focus { border-color: var(--om-ink); }
+
+.status-badge { border-radius: var(--om-r-pill); padding: 3px 9px; font-size: 12px; font-weight: 600; }
+.status-completed { background: var(--om-brand-tint); color: var(--om-brand); }
+.status-pending { background: var(--om-warning-tint); color: var(--om-warning); }
+.status-cancelled { background: var(--om-danger-tint); color: var(--om-danger); }
+}

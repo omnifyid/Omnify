@@ -1,0 +1,33 @@
+import uuid
+
+from sqlalchemy import Boolean, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base, TimestampMixin
+
+
+class Store(Base, TimestampMixin):
+    __tablename__ = "stores"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    logo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    self_order_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    selforder_is_open: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    show_logo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    pos_dine_in_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    pos_table_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    pos_table_count: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    pos_customer_name_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    receipt_header: Mapped[str | None] = mapped_column(Text, nullable=True)
+    receipt_footer: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    memberships: Mapped[list["StoreMembership"]] = relationship(back_populates="store")
+    categories: Mapped[list["ItemCategory"]] = relationship(back_populates="store")
+    items: Mapped[list["Item"]] = relationship(back_populates="store")
+    packages: Mapped[list["Package"]] = relationship(back_populates="store")
+    discounts: Mapped[list["Discount"]] = relationship(back_populates="store")
+    orders: Mapped[list["Order"]] = relationship(back_populates="store")

@@ -282,10 +282,13 @@
     return () => clearInterval(t);
   });
 
+  // Same look as new-ui: the active segment/chip gets the brand tint and a brand outline.
   const seg = (on: boolean) =>
-    `shrink-0 rounded-[8px] px-3.5 text-[14px] font-semibold transition-colors ${on ? 'bg-white shadow-sm' : 'text-[var(--om-ink-2)] hover:bg-[var(--om-fill-hover)]'}`;
+    `shrink-0 rounded-[8px] px-3 font-semibold transition-colors ${on ? 'bg-[var(--om-brand-tint)] text-[var(--om-ink)] shadow-[inset_0_0_0_2px_var(--om-brand)]' : 'text-[var(--om-text-secondary)] hover:bg-[var(--om-fill-hover)]'}`;
   const chip = (on: boolean) =>
-    `flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-3.5 text-[14px] font-medium transition-colors ${on ? 'border-[var(--om-ink)] bg-[var(--om-ink)] text-white' : 'border-[var(--om-border)] bg-white text-[var(--om-ink)]'}`;
+    `flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 font-medium transition-colors ${on ? 'border-[var(--om-brand)] bg-[var(--om-brand-tint)] text-[var(--om-ink)]' : 'border-[var(--om-border)] bg-white text-[var(--om-ink-2)]'}`;
+  const viewBtn = (on: boolean) =>
+    `grid h-11 w-11 place-items-center rounded-[9px] text-[var(--om-ink)] ${on ? 'bg-white shadow-[0_1px_2px_rgba(16,20,15,.12)]' : ''}`;
   const channelFilters = $derived([
     { id: 'all' as const, key: 'txAll' as MessageKey },
     { id: 'dine' as const, key: 'txChDine' as MessageKey },
@@ -310,32 +313,30 @@
   <div role="alert" class="mb-4 flex items-center gap-2 rounded-[12px] bg-[var(--om-danger-tint)] p-3 text-[14px] font-semibold text-[var(--om-danger)]"><span class="ms">error</span>{error}</div>
 {/if}
 
-<div class="mb-3 flex flex-wrap items-center gap-3">
-  <div class="flex max-w-full overflow-x-auto rounded-[11px] bg-[var(--om-fill-muted)] p-1" role="group">
+<div class="mb-3 flex flex-wrap items-center gap-2.5">
+  <div class="flex max-w-full overflow-x-auto rounded-[11px] bg-[#EDECE7] p-1" role="group">
     {#each PERIODS as p (p.id)}
-      <button class={seg(period === p.id)} style="min-height: calc(var(--om-tap) - 8px)" aria-pressed={period === p.id} onclick={() => { period = p.id; pageNo = 1; }}>{language.t(p.key)}</button>
+      <button class={seg(period === p.id)} style="height: var(--om-tap)" aria-pressed={period === p.id} onclick={() => { period = p.id; pageNo = 1; }}>{language.t(p.key)}</button>
     {/each}
   </div>
-  <div class="flex min-w-0 flex-1 basis-[260px] gap-1.5 overflow-x-auto">
+  <div class="flex min-w-0 flex-[1_1_300px] flex-nowrap gap-1.5 overflow-x-auto md:flex-wrap md:overflow-visible">
     {#each channelFilters as c (c.id)}
-      <button class={chip(channelFilter === c.id)} style="min-height: var(--om-tap)" onclick={() => { channelFilter = c.id; pageNo = 1; }}>{language.t(c.key)}</button>
+      <button class={chip(channelFilter === c.id)} style="height: var(--om-tap)" onclick={() => { channelFilter = c.id; pageNo = 1; }}>{language.t(c.key)}</button>
     {/each}
   </div>
-  <label class="flex items-center gap-2 rounded-[10px] border border-[var(--om-border)] bg-white px-3" style="min-height: var(--om-tap)">
+  <label class="flex w-full items-center gap-2 rounded-[10px] border border-[var(--om-border)] bg-white px-3 md:w-[220px]" style="height: var(--om-tap)">
     <span class="ms !text-[20px] text-[var(--om-text-secondary)]">search</span>
-    <input class="min-w-0 flex-1 bg-transparent text-[16px] outline-none" placeholder={language.t('txSearch')} bind:value={query} oninput={() => (pageNo = 1)} />
+    <input class="min-w-0 flex-1 bg-transparent text-[16px] text-[var(--om-ink)] outline-none" placeholder={language.t('txSearch')} bind:value={query} oninput={() => (pageNo = 1)} />
   </label>
-  <div class="flex rounded-[11px] bg-[var(--om-fill-muted)] p-1" role="group" aria-label="View">
-    <button class={seg(view === 'list')} style="min-height: calc(var(--om-tap) - 8px)" aria-pressed={view === 'list'} aria-label={language.t('txViewList')} title={language.t('txViewList')} onclick={() => setView('list')}><span class="ms !text-[20px]">view_list</span></button>
-    <button class={seg(view === 'grid')} style="min-height: calc(var(--om-tap) - 8px)" aria-pressed={view === 'grid'} aria-label={language.t('txViewGrid')} title={language.t('txViewGrid')} onclick={() => setView('grid')}><span class="ms !text-[20px]">grid_view</span></button>
+  <div class="flex shrink-0 gap-1 rounded-[12px] bg-[#EDECE7] p-[3px]" role="group" aria-label="View">
+    <button class={viewBtn(view === 'list')} aria-pressed={view === 'list'} aria-label={language.t('txViewList')} title={language.t('txViewList')} onclick={() => setView('list')}><span class="ms !text-[24px]">view_list</span></button>
+    <button class={viewBtn(view === 'grid')} aria-pressed={view === 'grid'} aria-label={language.t('txViewGrid')} title={language.t('txViewGrid')} onclick={() => setView('grid')}><span class="ms !text-[24px]">grid_view</span></button>
   </div>
 </div>
 
-<div class="mb-4 flex gap-1.5 overflow-x-auto">
+<div class="mb-3.5 flex flex-nowrap gap-1.5 overflow-x-auto md:flex-wrap md:overflow-visible">
   {#each STATUS_FILTERS.filter((f) => !f.kitchen || kitchenOn) as f (f.id)}
-    <button class={chip(statusFilter === f.id)} style="min-height: var(--om-tap)" onclick={() => { statusFilter = f.id; pageNo = 1; }}>
-      {language.t(f.key)}
-    </button>
+    <button class="{chip(statusFilter === f.id)} !px-3.5" style="height: var(--om-tap)" onclick={() => { statusFilter = f.id; pageNo = 1; }}>{language.t(f.key)}</button>
   {/each}
 </div>
 

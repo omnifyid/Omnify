@@ -529,10 +529,26 @@ async def _process_package_line(
     }
 
 
+# CANCELLED and COMPLETED are final; paid orders are corrected with void/refund, never reopened.
+ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
+    OrderStatus.PENDING: {OrderStatus.CONFIRMED, OrderStatus.COMPLETED, OrderStatus.CANCELLED},
+    OrderStatus.CONFIRMED: {OrderStatus.COMPLETED, OrderStatus.CANCELLED},
+    OrderStatus.COMPLETED: set(),
+    OrderStatus.CANCELLED: set(),
+}
+
+
 async def update_order_status(
     order_id: uuid.UUID, store_id: uuid.UUID, status: OrderStatus, db: AsyncSession
 ) -> Order:
+    await db.execute(
+        select(Order.id).where(Order.id == order_id, Order.store_id == store_id).with_for_update()
+    )
     order = await _load_order(order_id, store_id, db)
+    if status not in ALLOWED_TRANSITIONS[order.status]:
+        raise BadRequestError(f"An order that is {order.status.value} cannot become {status.value}")
+    if status == OrderStatus.CANCELLED and (order.refunded_amount > 0 or order.settlement_id):
+        raise BadRequestError("An order with refunds or a recorded platform payout cannot be cancelled")
     if status == OrderStatus.CANCELLED and order.status != OrderStatus.CANCELLED:
         await inventory_service.restore_for_order(store_id, order.id, order.order_number, db)
     order.status = status

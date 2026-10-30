@@ -66,14 +66,22 @@ async def get_store(
     return await store_service.get_store(store_id, db)
 
 
+# Money rules (tax, service charge, cash-difference limit) change what customers pay and how cash
+# is judged, so only the owner may set them even though managers edit the rest of the store.
+OWNER_ONLY_STORE_FIELDS = {"tax_bp", "service_bp", "pb1_bp", "shift_variance_threshold", "default_float"}
+
+
 @router.patch("/{store_id}", response_model=StoreRead)
 async def update_store(
     store_id: uuid.UUID,
     payload: StoreUpdate,
-    _: StoreMembership = Depends(OwnerOrManager),
+    m: StoreMembership = Depends(OwnerOrManager),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await store_service.update_store(store_id, payload.model_dump(exclude_unset=True), db)
+    changes = payload.model_dump(exclude_unset=True)
+    if m.role != StoreRole.OWNER and OWNER_ONLY_STORE_FIELDS & changes.keys():
+        raise ForbiddenError("Only the owner can change tax, service charge and shift cash settings")
+    result = await store_service.update_store(store_id, changes, db)
     s = str(store_id)
     await cache.delete(cache.menu_key(s), cache.items_key(s), cache.cats_key(s))
     return result

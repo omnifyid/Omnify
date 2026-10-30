@@ -15,6 +15,7 @@ Nav item `/finance` (Owner/Manager) with three tabs: **Shift & Kas**, **Pengelua
 
 - Expected cash = `opening_cash` + `CASH` orders (status `CONFIRMED`/`COMPLETED`, `confirmed_at` inside the shift window) − cash refunds (`order_refunds` with `method = CASH`, `refunded_at` inside the window) + cash in − cash out. `PLATFORM` orders are not cash.
 - Cash on hand with no open shift = last closed shift's `counted_cash` + `CASH` sales confirmed since it closed. The next open pre-fills this estimate; the cashier enters the counted amount and the gap is kept in `carry_expected` vs `opening_cash`.
+- The cash-difference limit and default opening cash (`PATCH /stores/{id}`, like tax, service charge and PB1) can only be changed by the Owner; the API returns 403 for a Manager.
 - Closing takes a single counted total. A difference above the store limit requires a note; the shift then waits for Owner/Manager review. There is no PIN.
 - Handover = close the shift, then the next cashier opens one starting from the counted cash.
 - A cash-out in an expense category also creates a `DRAWER` expense. A `DRAWER` expense needs an open shift, is dated today, and creates the matching cash-out.

@@ -12,6 +12,8 @@
 
 `PENDING` → `CONFIRMED` → `COMPLETED` | `CANCELLED`
 
+Allowed transitions (enforced by `PATCH /orders/{id}/status`, row locked): `PENDING` → `CONFIRMED`/`COMPLETED`/`CANCELLED`; `CONFIRMED` → `COMPLETED`/`CANCELLED`; `COMPLETED` and `CANCELLED` are final. An order with refunds (`refunded_amount > 0`) or a recorded platform payout (`settlement_id`) cannot be cancelled.
+
 ## Payment Methods
 
 `CASH`, `CARD`, `QRIS`, `TRANSFER`, `PLATFORM` (online platform orders only, see [prd-channels.md](prd-channels.md))

@@ -57,7 +57,12 @@ api.delete(`/stores/${storeId}/discounts/${id}`)
 | POST | `/stores/{id}/discounts/validate` | AnyMember | Validate promo code |
 | GET | `/stores/{id}/categories` | AnyMember | Paginated |
 | GET | `/stores/{id}/items` | AnyMember | Paginated, filterable |
-| GET | `/stores/{id}/orders` | AnyMember | Paginated, filterable |
+| GET | `/stores/{id}/orders` | AnyMember | Paginated; `status`, `payment_method`, `date_from`, `date_to`, `search`, `kind`, `state` |
+| POST | `/stores/{id}/orders/{oid}/refund` | OwnerOrManager | See [prd-orders.md](prd-orders.md) |
+| POST | `/stores/{id}/orders/{oid}/items/{iid}/void` | OwnerOrManager | See [prd-orders.md](prd-orders.md) |
+| GET | `/stores/{id}/channels` | AnyMember | Online platform settings and `reports/by-channel`; see [prd-channels.md](prd-channels.md) |
+| GET | `/stores/{id}/expenses` | OwnerOrManager | Paginated; expenses and platform settlements in [prd-finance.md](prd-finance.md) |
+| GET | `/stores/{id}/ingredients` | AnyMember | Paginated; inventory endpoints in [prd-inventory.md](prd-inventory.md) |
 
 ## Query Parameters
 

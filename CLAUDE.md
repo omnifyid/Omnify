@@ -27,3 +27,15 @@ All project knowledge lives in `doc/`. When you add a feature, change the deploy
 
 ## Self Order Feature
 @doc/prd-selforder.md
+
+## Kitchen Feature
+@doc/prd-kitchen.md
+
+## Inventory Feature
+@doc/prd-inventory.md
+
+## Online Platforms Feature
+@doc/prd-channels.md
+
+## Finance Feature
+@doc/prd-finance.md

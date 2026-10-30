@@ -7,11 +7,13 @@ export function visibleGroups(): NavGroup[] {
   if (auth.user?.is_superadmin) return [adminGroup];
   const role = session.selectedStore?.role ?? null;
   const selfOrderEnabled = session.selectedStore?.self_order_enabled ?? false;
+  const kitchenEnabled = session.selectedStore?.kitchen_enabled ?? false;
   if (!role) return [];
   return navGroups
     .map((g) => ({
       ...g,
-      items: g.items.filter((i) => i.roles.includes(role) && (i.href !== '/selforder' || selfOrderEnabled))
+      items: g.items.filter((i) => i.roles.includes(role) && (i.href !== '/selforder' || selfOrderEnabled) &&
+          (i.href !== '/kitchen' || kitchenEnabled))
     }))
     .filter((g) => g.items.length > 0);
 }

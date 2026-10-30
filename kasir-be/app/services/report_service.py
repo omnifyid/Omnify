@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import Date, cast, func, select
+from sqlalchemy import Date, Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Item, ItemCategory, Order, OrderItem, User
@@ -22,6 +22,17 @@ from app.schemas.report import (
     TopItemsReport,
 )
 
+# Revenue per order: the total without PB1 (tax collected for the government), scaled down by refunds.
+NET_SALE = cast(
+    func.round(
+        (Order.total_amount - Order.pb1_amount)
+        * 1.0  # numeric first: the int4 product overflows for large orders
+        * (Order.total_amount - Order.refunded_amount)
+        / func.nullif(Order.total_amount, 0)
+    ),
+    Integer,
+)
+
 REPORTABLE_ORDER_STATUSES = (OrderStatus.CONFIRMED, OrderStatus.COMPLETED)
 
 
@@ -34,7 +45,7 @@ async def dashboard_report(
 ) -> DashboardReport:
     sales_q = select(
         func.count(Order.id).label("order_count"),
-        func.sum(Order.total_amount).label("total_revenue"),
+        func.sum(NET_SALE).label("total_revenue"),
     ).where(Order.store_id == store_id, Order.status.in_(REPORTABLE_ORDER_STATUSES))
     if from_date:
         sales_q = sales_q.where(cast(Order.created_at, Date) >= from_date)
@@ -66,11 +77,11 @@ async def dashboard_report(
         select(
             Order.payment_method,
             func.count(Order.id).label("order_count"),
-            func.sum(Order.total_amount).label("total_revenue"),
+            func.sum(NET_SALE).label("total_revenue"),
         )
         .where(Order.store_id == store_id, Order.status.in_(REPORTABLE_ORDER_STATUSES))
         .group_by(Order.payment_method)
-        .order_by(func.sum(Order.total_amount).desc())
+        .order_by(func.sum(NET_SALE).desc())
     )
     if from_date:
         payment_q = payment_q.where(cast(Order.created_at, Date) >= from_date)
@@ -224,7 +235,7 @@ async def sales_report(
         select(
             cast(Order.created_at, Date).label("day"),
             func.count(Order.id).label("order_count"),
-            func.sum(Order.total_amount).label("total_revenue"),
+            func.sum(NET_SALE).label("total_revenue"),
         )
         .where(Order.store_id == store_id, Order.status.in_(REPORTABLE_ORDER_STATUSES))
         .group_by(cast(Order.created_at, Date))
@@ -294,12 +305,12 @@ async def staff_report(
             Order.operator_id,
             User.full_name,
             func.count(Order.id).label("order_count"),
-            func.sum(Order.total_amount).label("total_revenue"),
+            func.sum(NET_SALE).label("total_revenue"),
         )
         .join(User, User.id == Order.operator_id)
         .where(Order.store_id == store_id, Order.status.in_(REPORTABLE_ORDER_STATUSES))
         .group_by(Order.operator_id, User.full_name)
-        .order_by(func.sum(Order.total_amount).desc())
+        .order_by(func.sum(NET_SALE).desc())
     )
     if from_date:
         q = q.where(cast(Order.created_at, Date) >= from_date)
@@ -329,11 +340,11 @@ async def payment_report(
         select(
             Order.payment_method,
             func.count(Order.id).label("order_count"),
-            func.sum(Order.total_amount).label("total_revenue"),
+            func.sum(NET_SALE).label("total_revenue"),
         )
         .where(Order.store_id == store_id, Order.status.in_(REPORTABLE_ORDER_STATUSES))
         .group_by(Order.payment_method)
-        .order_by(func.sum(Order.total_amount).desc())
+        .order_by(func.sum(NET_SALE).desc())
     )
     if from_date:
         q = q.where(cast(Order.created_at, Date) >= from_date)

@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models import (
     AddonChoice,
     Discount,
@@ -14,11 +14,26 @@ from app.models import (
     Order,
     OrderItem,
     Package,
+    Store,
 )
 from app.models.discount import DiscountScope, DiscountType
-from app.models.order import OrderStatus, PaymentMethod
-from app.schemas.order import CartItemIn, OrderCreate, OrderPreviewRequest
-from app.services import discount_service
+from app.models.order import KitchenStatus, OrderStatus, PaymentMethod
+from app.models.refund import OrderRefund, RefundMethod, RefundType
+from app.schemas.order import (
+    CartItemIn,
+    OrderCreate,
+    OrderPreviewRequest,
+    RefundCreate,
+    VoidCreate,
+)
+from app.services import channel_service, discount_service, inventory_service
+
+
+def direct_order_fees(net: int, dine_in: bool, service_bp: int, pb1_bp: int) -> tuple[int, int]:
+    """Service charge (dine-in only) on the net amount, then PB1 on net + service; both rounded half up."""
+    service = (net * service_bp + 5000) // 10000 if dine_in else 0
+    pb1 = ((net + service) * pb1_bp + 5000) // 10000
+    return service, pb1
 
 
 async def _load_order(order_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession) -> Order:
@@ -26,6 +41,7 @@ async def _load_order(order_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession
         select(Order)
         .options(selectinload(Order.items))
         .where(Order.id == order_id, Order.store_id == store_id)
+        .execution_options(populate_existing=True)  # refunds/status changed in this session must show
     )
     order = result.scalar_one_or_none()
     if not order:
@@ -35,6 +51,64 @@ async def _load_order(order_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession
 
 async def get_order(order_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession) -> Order:
     return await _load_order(order_id, store_id, db)
+
+
+def _state_cond(state: str):
+    """Display state of an order (pending / kitchen stage / completed ...) as a SQL condition."""
+    in_kitchen = Order.kitchen_status.in_([KitchenStatus.NEW, KitchenStatus.COOKING])
+    return {
+        "verify": Order.status == OrderStatus.PENDING,
+        "kitchen": (Order.status == OrderStatus.CONFIRMED) & in_kitchen,
+        "ready": (Order.status == OrderStatus.CONFIRMED) & (Order.kitchen_status == KitchenStatus.READY),
+        "confirmed": (Order.status == OrderStatus.CONFIRMED)
+        & (Order.kitchen_status.is_(None) | (Order.kitchen_status == KitchenStatus.SERVED)),
+        "done": Order.status == OrderStatus.COMPLETED,
+        "cancelled": Order.status == OrderStatus.CANCELLED,
+    }[state]
+
+
+def _order_conds(
+    store_id: uuid.UUID,
+    status: OrderStatus | None = None,
+    payment_method: PaymentMethod | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    operator_id: uuid.UUID | None = None,
+    search: str | None = None,
+    kind: str | None = None,
+    state: str | None = None,
+) -> list:
+    conds = [Order.store_id == store_id]
+    if status:
+        conds.append(Order.status == status)
+    if payment_method:
+        conds.append(Order.payment_method == payment_method)
+    if date_from:
+        conds.append(Order.created_at >= datetime(date_from.year, date_from.month, date_from.day))
+    if date_to:
+        conds.append(
+            Order.created_at
+            < datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1)
+        )
+    if operator_id:
+        conds.append(Order.operator_id == operator_id)
+    if search and search.strip():
+        like = f"%{search.strip()}%"
+        conds.append(
+            Order.order_number.ilike(like)
+            | Order.channel_order_id.ilike(like)
+            | Order.customer_name.ilike(like)
+            | Order.notes.ilike(like)
+        )
+    if kind == "online":
+        conds.append(Order.channel.is_not(None))
+    elif kind == "dine":
+        conds.append(Order.channel.is_(None) & (Order.order_type == "DINE_IN"))
+    elif kind == "take":
+        conds.append(Order.channel.is_(None) & (Order.order_type.is_(None) | (Order.order_type != "DINE_IN")))
+    if state:
+        conds.append(_state_cond(state))
+    return conds
 
 
 async def list_orders(
@@ -47,35 +121,23 @@ async def list_orders(
     operator_id: uuid.UUID | None = None,
     limit: int = 50,
     offset: int = 0,
+    search: str | None = None,
+    kind: str | None = None,
+    state: str | None = None,
 ) -> tuple[list[Order], int]:
+    conds = _order_conds(
+        store_id, status, payment_method, date_from, date_to, operator_id, search, kind, state
+    )
+    total = (await db.execute(select(func.count()).select_from(Order).where(*conds))).scalar_one()
     q = (
         select(Order)
         .options(selectinload(Order.items))
-        .where(Order.store_id == store_id)
+        .where(*conds)
         .order_by(Order.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
-    count_q = select(func.count()).select_from(Order).where(Order.store_id == store_id)
-    if status:
-        q = q.where(Order.status == status)
-        count_q = count_q.where(Order.status == status)
-    if payment_method:
-        q = q.where(Order.payment_method == payment_method)
-        count_q = count_q.where(Order.payment_method == payment_method)
-    if date_from:
-        dt_from = datetime(date_from.year, date_from.month, date_from.day, tzinfo=UTC)
-        q = q.where(Order.created_at >= dt_from)
-        count_q = count_q.where(Order.created_at >= dt_from)
-    if date_to:
-        dt_to = datetime(date_to.year, date_to.month, date_to.day, tzinfo=UTC) + timedelta(days=1)
-        q = q.where(Order.created_at < dt_to)
-        count_q = count_q.where(Order.created_at < dt_to)
-    if operator_id:
-        q = q.where(Order.operator_id == operator_id)
-        count_q = count_q.where(Order.operator_id == operator_id)
-
-    total = (await db.execute(count_q)).scalar_one()
-    orders = list((await db.execute(q.limit(limit).offset(offset))).scalars().all())
-    return orders, total
+    return list((await db.execute(q)).scalars().all()), total
 
 
 async def create_order(
@@ -95,6 +157,31 @@ async def create_order(
     """
     async with db.begin_nested():  # savepoint; outer session commits
         line_results = []
+
+        # Online platform orders: platform price markup, no discounts, commission + included tax
+        channel = payload.channel.value if payload.channel else None
+        markup_bp = 0
+        commission_bp = 0
+        payout_lag_days = 0
+        channel_order_id = (payload.channel_order_id or "").strip().upper() or None
+        if channel:
+            setting = await channel_service.get_setting(store_id, channel, db)
+            if not setting.enabled:
+                raise BadRequestError(f"{channel} is not enabled for this store")
+            markup_bp, commission_bp = setting.markup_bp, setting.commission_bp
+            payout_lag_days = setting.payout_lag_days
+            dup = (
+                await db.execute(
+                    select(Order.order_number).where(
+                        Order.store_id == store_id,
+                        Order.channel == channel,
+                        func.upper(Order.channel_order_id) == channel_order_id,
+                        Order.status != OrderStatus.CANCELLED,
+                    )
+                )
+            ).first()
+            if dup:
+                raise ConflictError(f"Platform order ID already used by {dup[0]}")
 
         # Batch-fetch all option/addon choices upfront to avoid N+1 queries
         all_option_ids = [cid for ci in payload.items for cid in ci.selected_option_choice_ids]
@@ -119,14 +206,18 @@ async def create_order(
 
         for cart_item in payload.items:
             if cart_item.item_id:
-                line = await _process_item_line(store_id, cart_item, db, option_map, addon_map)
+                line = await _process_item_line(
+                    store_id, cart_item, db, option_map, addon_map, markup_bp, channel
+                )
             else:
-                line = await _process_package_line(store_id, cart_item, db, addon_map)
+                line = await _process_package_line(store_id, cart_item, db, addon_map, markup_bp)
             line_results.append(line)
 
         # --- Apply automatic ITEM-scope discounts ---
         # Lock each automatic discount to prevent race on used_count
-        auto_discounts = await discount_service.list_automatic_item_discounts(store_id, db)
+        auto_discounts = (
+            [] if channel else await discount_service.list_automatic_item_discounts(store_id, db)
+        )
         applied_auto: list[Discount] = []
         for auto_d in auto_discounts:
             locked = (
@@ -159,7 +250,7 @@ async def create_order(
         discount_amount = 0
         discount_code_snapshot: str | None = None
 
-        if payload.discount_code:
+        if payload.discount_code and not channel:
             result = await db.execute(
                 select(Discount)
                 .where(
@@ -225,6 +316,27 @@ async def create_order(
         daily_count = count_result.scalar_one() + 1
         order_number = f"ORD-{today_str}-{daily_count:05d}"
 
+        kitchen_enabled, tax_bp, service_bp, pb1_bp = (
+            await db.execute(
+                select(Store.kitchen_enabled, Store.tax_bp, Store.service_bp, Store.pb1_bp).where(
+                    Store.id == store_id
+                )
+            )
+        ).one()
+
+        service_amount = pb1_amount = 0
+        if not channel:
+            service_amount, pb1_amount = direct_order_fees(
+                total_amount, getattr(payload, "order_type", None) == "DINE_IN", service_bp, pb1_bp
+            )
+            total_amount += service_amount + pb1_amount
+
+        commission_amount = expected_payout = tax_amount = None
+        if channel:
+            commission_amount = (total_amount * commission_bp + 5000) // 10000
+            expected_payout = total_amount - commission_amount
+            tax_amount = channel_service.included_tax(total_amount, tax_bp)
+
         # Write Order
         order = Order(
             store_id=store_id,
@@ -234,6 +346,8 @@ async def create_order(
             subtotal=subtotal,
             discount_amount=discount_amount,
             total_amount=total_amount,
+            service_amount=service_amount,
+            pb1_amount=pb1_amount,
             discount_id=discount_obj.id if discount_obj else None,
             discount_code_snapshot=discount_code_snapshot,
             notes=payload.notes,
@@ -241,12 +355,31 @@ async def create_order(
             table_number=getattr(payload, "table_number", None),
             customer_name=getattr(payload, "customer_name", None),
             status=initial_status,
+            channel=channel,
+            channel_order_id=channel_order_id,
+            app_total=payload.app_total if channel else None,
+            commission_amount=commission_amount,
+            expected_payout=expected_payout,
+            tax_amount=tax_amount,
+            driver_name=(payload.driver_name or "").strip() or None if channel else None,
+            confirmed_at=(
+                datetime.now(UTC) if initial_status == OrderStatus.CONFIRMED else None
+            ),
+            expected_payout_date=(
+                date.today() + timedelta(days=payout_lag_days) if channel else None
+            ),
+            kitchen_status=(
+                KitchenStatus.NEW
+                if kitchen_enabled and initial_status == OrderStatus.CONFIRMED
+                else None
+            ),
         )
         db.add(order)
         await db.flush()
 
+        order_items: list[OrderItem] = []
         for line in line_results:
-            db.add(
+            order_items.append(
                 OrderItem(
                     order_id=order.id,
                     item_id=line.get("item_id"),
@@ -261,6 +394,11 @@ async def create_order(
                     addons_snapshot=line.get("addons_snapshot"),
                 )
             )
+        db.add_all(order_items)
+        await db.flush()
+        await inventory_service.deduct_for_order(
+            store_id, order.id, order.order_number, order_items, db
+        )
 
         for line in line_results:
             if line.get("_stock_item") is not None:
@@ -281,6 +419,8 @@ async def _process_item_line(
     db: AsyncSession,
     option_map: dict[uuid.UUID, OptionChoice],
     addon_map: dict[uuid.UUID, AddonChoice],
+    markup_bp: int = 0,
+    channel: str | None = None,
 ) -> dict:
     result = await db.execute(
         select(Item)
@@ -317,19 +457,21 @@ async def _process_item_line(
         ac = addon_map.get(choice_id)
         if not ac:
             raise BadRequestError(f"Addon choice {choice_id} not found or unavailable")
-        addon_total += ac.extra_price
-        addons_snapshot.append(
-            {"label": ac.label, "extra_price": ac.extra_price, "group_id": str(ac.group_id)}
-        )
+        extra = channel_service.ceil_markup(ac.extra_price, markup_bp)
+        addon_total += extra
+        addons_snapshot.append({"label": ac.label, "extra_price": extra, "group_id": str(ac.group_id)})
 
-    line_total = (item.base_price + addon_total) * cart_item.quantity
+    # a manual platform price replaces the base price; markup then only applies to add-ons
+    manual = next((p.price for p in item.channel_prices if p.channel == channel), None) if channel else None
+    unit_price = manual or channel_service.ceil_markup(item.base_price, markup_bp)
+    line_total = (unit_price + addon_total) * cart_item.quantity
 
     return {
         "item_id": item.id,
         "category_id": item.category_id,
         "package_id": None,
         "name": item.name,
-        "unit_price": item.base_price,
+        "unit_price": unit_price,
         "quantity": cart_item.quantity,
         "addon_total": addon_total,
         "line_total": line_total,
@@ -345,6 +487,7 @@ async def _process_package_line(
     cart_item: CartItemIn,
     db: AsyncSession,
     addon_map: dict[uuid.UUID, AddonChoice],
+    markup_bp: int = 0,
 ) -> dict:
     result = await db.execute(
         select(Package).where(
@@ -364,17 +507,19 @@ async def _process_package_line(
         ac = addon_map.get(choice_id)
         if not ac:
             raise BadRequestError(f"Addon choice {choice_id} not found or unavailable")
-        addon_total += ac.extra_price
-        addons_snapshot.append({"label": ac.label, "extra_price": ac.extra_price})
+        extra = channel_service.ceil_markup(ac.extra_price, markup_bp)
+        addon_total += extra
+        addons_snapshot.append({"label": ac.label, "extra_price": extra})
 
-    line_total = (pkg.flat_price + addon_total) * cart_item.quantity
+    unit_price = channel_service.ceil_markup(pkg.flat_price, markup_bp)
+    line_total = (unit_price + addon_total) * cart_item.quantity
 
     return {
         "item_id": None,
         "category_id": None,
         "package_id": pkg.id,
         "name": pkg.name,
-        "unit_price": pkg.flat_price,
+        "unit_price": unit_price,
         "quantity": cart_item.quantity,
         "addon_total": addon_total,
         "line_total": line_total,
@@ -388,9 +533,143 @@ async def update_order_status(
     order_id: uuid.UUID, store_id: uuid.UUID, status: OrderStatus, db: AsyncSession
 ) -> Order:
     order = await _load_order(order_id, store_id, db)
+    if status == OrderStatus.CANCELLED and order.status != OrderStatus.CANCELLED:
+        await inventory_service.restore_for_order(store_id, order.id, order.order_number, db)
     order.status = status
+    if status in (OrderStatus.CONFIRMED, OrderStatus.COMPLETED) and order.confirmed_at is None:
+        order.confirmed_at = datetime.now(UTC)
+    if status == OrderStatus.CONFIRMED and order.kitchen_status is None:
+        kitchen_enabled = (
+            await db.execute(select(Store.kitchen_enabled).where(Store.id == store_id))
+        ).scalar_one_or_none()
+        if kitchen_enabled:
+            order.kitchen_status = KitchenStatus.NEW
     if status == OrderStatus.COMPLETED:
         order.completed_at = datetime.now(UTC)
+    await db.commit()
+    return await _load_order(order_id, store_id, db)
+
+
+async def _refundable_order(order_id, store_id, db) -> Order:
+    """Locks the order row, then loads it; only paid direct orders can be refunded."""
+    await db.execute(select(Order.id).where(Order.id == order_id, Order.store_id == store_id).with_for_update())
+    order = await _load_order(order_id, store_id, db)
+    if order.channel:
+        raise BadRequestError("Online platform orders are refunded by the platform")
+    if order.status not in (OrderStatus.CONFIRMED, OrderStatus.COMPLETED):
+        raise BadRequestError("Only paid orders can be refunded")
+    return order
+
+
+async def _record_refund(
+    order: Order, store_id, user_id, rtype: RefundType, method: RefundMethod, amount: int,
+    reason: str, db, item=None, qty: int | None = None,
+) -> None:
+    if amount <= 0 or amount > order.total_amount - order.refunded_amount:
+        raise BadRequestError("Refund amount exceeds what is left on the order")
+    if method == RefundMethod.CASH:
+        from app.services import shift_service
+
+        if not await shift_service.open_shift_of(store_id, db):
+            raise BadRequestError("A cash refund needs an open shift")
+    db.add(
+        OrderRefund(
+            order_id=order.id,
+            store_id=store_id,
+            user_id=user_id,
+            type=rtype.value,
+            method=method.value,
+            amount=amount,
+            reason=reason.strip(),
+            order_item_id=item.id if item else None,
+            quantity=qty,
+            refunded_at=datetime.now(UTC),
+        )
+    )
+    order.refunded_amount += amount
+
+
+async def refund_order(order_id, store_id, user_id, payload: RefundCreate, db) -> Order:
+    order = await _refundable_order(order_id, store_id, db)
+    await _record_refund(order, store_id, user_id, RefundType.REFUND, payload.method, payload.amount, payload.reason, db)
+    await db.commit()
+    return await _load_order(order_id, store_id, db)
+
+
+async def void_item(order_id, store_id, item_id, user_id, payload: VoidCreate, db) -> Order:
+    order = await _refundable_order(order_id, store_id, db)
+    item = next((i for i in order.items if i.id == item_id), None)
+    if not item:
+        raise NotFoundError("Order item not found")
+    if payload.quantity > item.quantity - item.void_qty:
+        raise BadRequestError("Quantity exceeds what is left on this line")
+    remaining = sum(i.quantity - i.void_qty for i in order.items) - payload.quantity
+    if remaining <= 0:
+        raise BadRequestError("Every item would be voided; cancel the order instead")
+    # proportional share of the line, so the last unit absorbs rounding
+    before = item.line_total * item.void_qty // item.quantity
+    after = item.line_total * (item.void_qty + payload.quantity) // item.quantity
+    await _record_refund(
+        order, store_id, user_id, RefundType.VOID, payload.method, after - before, payload.reason, db,
+        item=item, qty=payload.quantity,
+    )
+    item.void_qty += payload.quantity
+    await db.commit()
+    return await _load_order(order_id, store_id, db)
+
+
+async def list_kitchen_orders(
+    store_id: uuid.UUID, db: AsyncSession, limit: int = 100, offset: int = 0
+) -> tuple[list[Order], int]:
+    """Confirmed orders still in the kitchen flow, oldest first."""
+    cond = (
+        Order.store_id == store_id,
+        Order.status == OrderStatus.CONFIRMED,
+        Order.kitchen_status.in_(
+            [KitchenStatus.NEW, KitchenStatus.COOKING, KitchenStatus.READY]
+        ),
+    )
+    total = (await db.execute(select(func.count()).select_from(Order).where(*cond))).scalar_one()
+    q = (
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(*cond)
+        .order_by(Order.created_at.asc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list((await db.execute(q)).scalars().all()), total
+
+
+async def _require_kitchen_order(order_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession) -> Order:
+    kitchen_enabled = (
+        await db.execute(select(Store.kitchen_enabled).where(Store.id == store_id))
+    ).scalar_one_or_none()
+    if not kitchen_enabled:
+        raise BadRequestError("Kitchen management is not enabled for this store")
+    order = await _load_order(order_id, store_id, db)
+    if order.kitchen_status is None:
+        raise BadRequestError("Order is not in the kitchen flow")
+    return order
+
+
+async def update_kitchen_status(
+    order_id: uuid.UUID, store_id: uuid.UUID, kitchen_status: KitchenStatus, db: AsyncSession
+) -> Order:
+    order = await _require_kitchen_order(order_id, store_id, db)
+    order.kitchen_status = kitchen_status
+    await db.commit()
+    return await _load_order(order_id, store_id, db)
+
+
+async def update_kitchen_item(
+    order_id: uuid.UUID, store_id: uuid.UUID, order_item_id: uuid.UUID, is_done: bool, db: AsyncSession
+) -> Order:
+    order = await _require_kitchen_order(order_id, store_id, db)
+    line = next((i for i in order.items if i.id == order_item_id), None)
+    if not line:
+        raise NotFoundError("Order item not found")
+    line.is_done = is_done
     await db.commit()
     return await _load_order(order_id, store_id, db)
 
@@ -516,10 +795,17 @@ async def preview_order(
             payload.discount_code, store_id, subtotal, db, cart_items_for_validate
         )
 
+    net = subtotal - discount_amount if is_valid else subtotal
+    service_bp, pb1_bp = (
+        await db.execute(select(Store.service_bp, Store.pb1_bp).where(Store.id == store_id))
+    ).one()
+    service_amount, pb1_amount = direct_order_fees(net, payload.order_type == "DINE_IN", service_bp, pb1_bp)
     return {
         "subtotal": subtotal,
         "discount_amount": discount_amount if is_valid else 0,
-        "total_amount": subtotal - discount_amount if is_valid else subtotal,
+        "service_amount": service_amount,
+        "pb1_amount": pb1_amount,
+        "total_amount": net + service_amount + pb1_amount,
         "valid": is_valid,
         "message": message,
     }

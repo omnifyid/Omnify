@@ -3,6 +3,8 @@
   import { api, apiRequest } from '$lib/api/client';
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
+  import type { ChannelSetting } from '$lib/api/types';
+  import { formatDigits, parseAmount } from '$lib/utils/finance';
   import { formatRupiah } from '$lib/utils/format';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -18,6 +20,29 @@
   let posTable = $state(false);
   let posTableCount = $state(10);
   let posCustomerName = $state(false);
+  let kitchenEnabled = $state(false);
+
+  // ── Online platforms (Owner only) ─────────────────────────
+  type ChannelForm = { channel: ChannelSetting['channel']; enabled: boolean; commission: string; markup: string; lag: string };
+  const CHANNEL_NAMES: Record<string, string> = { GOFOOD: 'GoFood', GRABFOOD: 'GrabFood', SHOPEEFOOD: 'ShopeeFood' };
+  let channelForms = $state<ChannelForm[]>([]);
+  let taxPct = $state('');
+  let servicePct = $state('');
+  let pb1Pct = $state('');
+  let shiftThreshold = $state('');
+  let defaultFloat = $state('');
+  let isOwner = $derived(session.selectedStore?.role === 'OWNER');
+  const pctText = (bp: number) => (bp ? String(bp / 100) : '');
+  const toBp = (v: string) => Math.max(0, Math.round((parseFloat(v.replace(',', '.')) || 0) * 100));
+
+  async function loadChannels() {
+    const storeId = session.selectedStore?.id;
+    if (!storeId || session.selectedStore?.role !== 'OWNER') { channelForms = []; return; }
+    try {
+      const list = await api.get<ChannelSetting[]>(`/stores/${storeId}/channels`);
+      channelForms = list.map((c) => ({ channel: c.channel, enabled: c.enabled, commission: pctText(c.commission_bp), markup: pctText(c.markup_bp), lag: String(c.payout_lag_days) }));
+    } catch { channelForms = []; }
+  }
 
   // ── Logo upload ───────────────────────────────────────────
   let logoUrl = $state<string | null>(null);
@@ -56,6 +81,13 @@
     posTable = s.pos_table_enabled ?? false;
     posTableCount = s.pos_table_count ?? 10;
     posCustomerName = s.pos_customer_name_enabled ?? false;
+    kitchenEnabled = s.kitchen_enabled ?? false;
+    taxPct = pctText(s.tax_bp ?? 0);
+    servicePct = pctText(s.service_bp ?? 0);
+    pb1Pct = pctText(s.pb1_bp ?? 0);
+    shiftThreshold = formatDigits(String(s.shift_variance_threshold ?? 20000));
+    defaultFloat = formatDigits(String(s.default_float ?? 0));
+    void loadChannels();
   }
 
   onMount(() => {
@@ -124,7 +156,21 @@
         pos_table_enabled: posTable,
         pos_table_count: posTableCount,
         pos_customer_name_enabled: posCustomerName,
+        kitchen_enabled: kitchenEnabled,
+        ...(isOwner ? { tax_bp: toBp(taxPct), service_bp: toBp(servicePct), pb1_bp: toBp(pb1Pct), shift_variance_threshold: parseAmount(shiftThreshold), default_float: parseAmount(defaultFloat) } : {}),
       });
+      if (isOwner) {
+        await Promise.all(
+          channelForms.map((c) =>
+            api.patch(`/stores/${storeId}/channels/${c.channel}`, {
+              enabled: c.enabled,
+              commission_bp: toBp(c.commission),
+              markup_bp: toBp(c.markup),
+              payout_lag_days: Math.max(0, parseInt(c.lag, 10) || 0)
+            })
+          )
+        );
+      }
       saveSuccess = language.t('savedSuccessfully');
       await session.loadStores();
     } catch (err) {
@@ -318,6 +364,95 @@
 
       </div>
     </div>
+
+    <!-- ── Kitchen ─────────────────────────────────────────── -->
+    <div class="mb-8">
+      <p class="section-label">{language.t('kitchen')}</p>
+      <div class="card p-5">
+        <label class="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-[var(--border)] p-3">
+          <div>
+            <div class="text-sm font-semibold text-[var(--espresso)]">{language.t('kitchenManagement')}</div>
+            <div class="text-xs text-[var(--text-muted)]">{language.t('kitchenManagementDesc')}</div>
+          </div>
+          <Toggle bind:checked={kitchenEnabled} />
+        </label>
+      </div>
+    </div>
+
+    <!-- ── Online platforms (Owner) ────────────────────────── -->
+    {#if isOwner && channelForms.length}
+      <div class="mb-8">
+        <p class="section-label">{language.t('channelsSettings')}</p>
+        <div class="card space-y-3 p-5">
+          <p class="text-xs text-[var(--text-muted)]">{language.t('channelsSettingsDesc')}</p>
+          {#each channelForms as c (c.channel)}
+            <div class="rounded-xl border border-[var(--border)] p-3">
+              <label class="flex cursor-pointer items-center justify-between gap-3">
+                <span class="text-sm font-semibold text-[var(--espresso)]">{CHANNEL_NAMES[c.channel]}</span>
+                <Toggle bind:checked={c.enabled} />
+              </label>
+              {#if c.enabled}
+                <div class="mt-3 grid grid-cols-2 gap-3">
+                  <label class="block">
+                    <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('channelCommission')}</span>
+                    <input class="field" inputmode="decimal" placeholder="0" bind:value={c.commission} />
+                  </label>
+                  <label class="block">
+                    <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('channelMarkup')}</span>
+                    <input class="field" inputmode="decimal" placeholder="0" bind:value={c.markup} />
+                  </label>
+                  <label class="col-span-2 block">
+                    <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('channelPayoutLag')}</span>
+                    <input class="field" inputmode="numeric" placeholder="2" bind:value={c.lag} />
+                  </label>
+                </div>
+              {/if}
+            </div>
+          {/each}
+          <label class="block">
+            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('taxRate')}</span>
+            <input class="field max-w-[10rem]" inputmode="decimal" placeholder="0" bind:value={taxPct} />
+            <span class="mt-1 block text-xs text-[var(--text-muted)]">{language.t('taxRateDesc')}</span>
+          </label>
+        </div>
+      </div>
+    {/if}
+
+    <!-- ── Service charge & PB1 (Owner) ────────────────────── -->
+    {#if isOwner}
+      <div class="mb-8">
+        <p class="section-label">{language.t('serviceLabel')} & {language.t('pb1Label')}</p>
+        <div class="card grid gap-3 p-5 sm:grid-cols-2">
+          <label class="block">
+            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('settingsServicePct')}</span>
+            <input class="field" inputmode="decimal" placeholder="0" bind:value={servicePct} />
+          </label>
+          <label class="block">
+            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('settingsPb1Pct')}</span>
+            <input class="field" inputmode="decimal" placeholder="0" bind:value={pb1Pct} />
+          </label>
+          <p class="text-xs text-[var(--text-muted)] sm:col-span-2">{language.t('settingsFeesHint')}</p>
+        </div>
+      </div>
+    {/if}
+
+    <!-- ── Shift & cash (Owner) ────────────────────────────── -->
+    {#if isOwner}
+      <div class="mb-8">
+        <p class="section-label">{language.t('finTabShift')}</p>
+        <div class="card grid gap-3 p-5 sm:grid-cols-2">
+          <label class="block">
+            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('settingsShiftThreshold')}</span>
+            <input class="field" type="text" inputmode="numeric" placeholder="0" value={shiftThreshold} oninput={(e) => { shiftThreshold = formatDigits(e.currentTarget.value); e.currentTarget.value = shiftThreshold; }} />
+          </label>
+          <label class="block">
+            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('settingsDefaultFloat')}</span>
+            <input class="field" type="text" inputmode="numeric" placeholder="0" value={defaultFloat} oninput={(e) => { defaultFloat = formatDigits(e.currentTarget.value); e.currentTarget.value = defaultFloat; }} />
+          </label>
+          <p class="text-xs text-[var(--text-muted)] sm:col-span-2">{language.t('settingsShiftHint')}</p>
+        </div>
+      </div>
+    {/if}
 
     <!-- ── Save ────────────────────────────────────────────── -->
     {#if saveError}

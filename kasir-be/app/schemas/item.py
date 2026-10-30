@@ -1,6 +1,6 @@
 import uuid
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class OptionChoiceCreate(BaseModel):
@@ -127,5 +127,17 @@ class PublicItemRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ChannelPricesUpdate(BaseModel):
+    prices: dict[str, int | None]  # channel -> manual price; null/0 clears it
+
+
 class ItemRead(PublicItemRead):
     cost_price: int | None
+    channel_prices: dict[str, int] = {}  # manual platform prices, staff only
+
+    @field_validator("channel_prices", mode="before")
+    @classmethod
+    def rows_to_dict(cls, v):
+        if isinstance(v, list):
+            return {r.channel: r.price for r in v}
+        return v

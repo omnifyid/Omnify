@@ -27,3 +27,9 @@
 | Discount usage count | `used_count` | `used_count` |
 | Discount type fixed | `FIXED` | `FIXED` |
 | Paginated list | `PaginatedResponse[T]` | `PaginatedResponse<T>` |
+
+## Data tables
+
+- Every data table has pagination, 20 rows per page (`PAGE_SIZE` in `$lib/utils/paging`) using `<Pagination>` from `$lib/components/Pagination.svelte`.
+- Paging, filtering and search are server-side (`limit`/`offset`, `PaginatedResponse<T>`). Never load a whole table to page or filter it in the browser. Totals and KPIs come from a dedicated summary endpoint, not from counting loaded rows. Filter chips do not show per-chip counts.
+- Reset to page 1 whenever a filter, search, or period changes; debounce search requests (350 ms).

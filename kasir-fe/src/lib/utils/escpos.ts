@@ -157,7 +157,8 @@ export async function buildReceiptBytes(
 
 	// Totals
 	const itemDiscTotal = (order.items ?? []).reduce((s, i) => s + (i.item_discount_amount ?? 0), 0);
-	const hasDiscount = (order.discount_amount ?? 0) > 0 || itemDiscTotal > 0;
+	const hasDiscount =
+		(order.discount_amount ?? 0) > 0 || itemDiscTotal > 0 || (order.service_amount ?? 0) > 0 || (order.pb1_amount ?? 0) > 0;
 
 	if (hasDiscount) {
 		p(txt(padLine('Subtotal', formatRupiah(order.subtotal ?? 0)) + '\n'));
@@ -171,6 +172,9 @@ export async function buildReceiptBytes(
 			: 'Diskon';
 		p(txt(padLine(label, '-' + formatRupiah(order.discount_amount!)) + '\n'));
 	}
+
+	if ((order.service_amount ?? 0) > 0) p(txt(padLine('Layanan', formatRupiah(order.service_amount!)) + '\n'));
+	if ((order.pb1_amount ?? 0) > 0) p(txt(padLine('PB1', formatRupiah(order.pb1_amount!)) + '\n'));
 
 	p(BOLD(true), txt(padLine('TOTAL', formatRupiah(order.total_amount)) + '\n'), BOLD(false));
 	p(txt(padLine('Pembayaran', order.payment_method) + '\n'));
@@ -195,5 +199,33 @@ export async function buildReceiptBytes(
 
 	p(FEED(3), CUT());
 
+	return concat(...parts);
+}
+
+/** Kitchen ticket: big quantities and modifiers only, no prices. */
+export function buildKitchenTicketBytes(order: Order, storeName: string, where: string): Uint8Array {
+	const parts: Uint8Array[] = [];
+	const p = (...a: Uint8Array[]) => parts.push(...a);
+	const DOUBLE = (on: boolean) => cmd(GS, 0x21, on ? 0x11 : 0x00);
+
+	p(INIT(), ALIGN(1), BOLD(true), txt('TIKET DAPUR\n'), BOLD(false), txt(storeName + '\n'));
+	p(DOUBLE(true), txt('#' + (order.order_number ?? order.id.slice(0, 8)) + '\n'), DOUBLE(false));
+	p(txt(formatDateTime(order.created_at) + '\n'), ALIGN(0), sep());
+	p(BOLD(true), txt(where + '\n'), BOLD(false));
+	if (order.customer_name) p(txt(order.customer_name + '\n'));
+	p(sep());
+
+	for (const item of order.items ?? []) {
+		const left = item.quantity - (item.void_qty ?? 0);
+		if (left <= 0) continue;
+		p(BOLD(true), txt(`${left}x ${item.item_name_snapshot}\n`), BOLD(false));
+		const mods = [snapshotLabel(item.options_snapshot), snapshotLabel(item.addons_snapshot)]
+			.filter(Boolean)
+			.join(', ');
+		if (mods) p(txt('   ' + mods + '\n'));
+	}
+
+	if (order.notes?.trim()) p(sep(), txt('Catatan: ' + order.notes.trim() + '\n'));
+	p(FEED(3), CUT());
 	return concat(...parts);
 }

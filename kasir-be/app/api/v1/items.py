@@ -12,6 +12,7 @@ from app.database import get_db
 from app.models import StoreMembership
 from app.schemas.common import PaginatedResponse
 from app.schemas.item import (
+    ChannelPricesUpdate,
     AddonGroupCreate,
     ItemCreate,
     ItemRead,
@@ -132,6 +133,19 @@ async def update_stock(
     db: AsyncSession = Depends(get_db),
 ):
     result = await item_service.update_stock(item_id, store_id, payload.stock, db)
+    await cache.delete(*_all_cache_keys(store_id))
+    return result
+
+
+@router.put("/{store_id}/items/{item_id}/channel-prices", response_model=ItemRead)
+async def replace_channel_prices(
+    store_id: uuid.UUID,
+    item_id: uuid.UUID,
+    payload: ChannelPricesUpdate,
+    _: StoreMembership = Depends(OwnerOrManager),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await item_service.replace_channel_prices(item_id, store_id, payload.prices, db)
     await cache.delete(*_all_cache_keys(store_id))
     return result
 

@@ -12,7 +12,13 @@ from app.models.order import OrderStatus, PaymentMethod
 from app.models.store import Store
 from app.schemas.category import CategoryRead
 from app.schemas.item import PublicItemRead
-from app.schemas.order import OrderCreate, OrderRead, SelfOrderCreate
+from app.schemas.order import (
+    OrderCreate,
+    OrderPreviewRequest,
+    OrderPreviewResponse,
+    OrderRead,
+    SelfOrderCreate,
+)
 from app.services import item_service, order_service
 
 router = APIRouter()
@@ -24,6 +30,8 @@ class StorePublicInfo(BaseModel):
     description: str | None
     logo_url: str | None
     selforder_is_open: bool = True
+    service_bp: int = 0
+    pb1_bp: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -70,6 +78,18 @@ async def get_public_menu(
     return response
 
 
+@router.post("/stores/{store_id}/orders/preview", response_model=OrderPreviewResponse)
+async def preview_self_order(
+    store_id: uuid.UUID,
+    payload: OrderPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Totals (automatic discounts, service, PB1) for the customer's cart; promo codes are not accepted."""
+    await _get_active_store(store_id, db)
+    payload.discount_code = None
+    return await order_service.preview_order(store_id, payload, db)
+
+
 @router.post("/stores/{store_id}/orders", response_model=OrderRead, status_code=201)
 async def create_self_order(
     store_id: uuid.UUID,
@@ -91,6 +111,8 @@ async def create_self_order(
         payment_method=PaymentMethod.CASH,
         items=payload.items,
         notes=combined_notes,
+        order_type="DINE_IN" if payload.table_number else None,
+        table_number=payload.table_number,
     )
     order = await order_service.create_order(
         store_id=store_id,

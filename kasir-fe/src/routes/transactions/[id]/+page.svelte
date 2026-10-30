@@ -7,7 +7,7 @@
   import { session } from '$lib/stores/session.svelte';
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
   import { printEscPos, canPrint } from '$lib/utils/bluetooth-printer';
-  import { buildReceiptBytes } from '$lib/utils/escpos';
+  import { buildKitchenTicketBytes, buildReceiptBytes } from '$lib/utils/escpos';
   import { ArrowLeft, Ban, CheckCircle2, Printer, X } from 'lucide-svelte';
 
   let order = $state<Order | null>(null);
@@ -18,6 +18,7 @@
   let loadedKey = $state('');
 
   let receiptOpen = $state(false);
+  let ticketOpen = $state(false);
   let btPrinting = $state(false);
   let btError = $state('');
 
@@ -62,6 +63,8 @@
     error = '';
     try {
       order = await api.get<Order>(`/stores/${storeId}/orders/${orderId}`);
+      if ($page.url.searchParams.get('receipt') === '1') openReceipt();
+      if ($page.url.searchParams.get('ticket') === '1') openTicket();
     } catch (err) {
       error = err instanceof Error ? err.message : language.t('transactionNotFound');
     } finally {
@@ -87,6 +90,24 @@
 
   function openReceipt() { btError = ''; receiptOpen = true; }
   function closeReceipt() { receiptOpen = false; }
+  function openTicket() { btError = ''; ticketOpen = true; }
+  function closeTicket() { ticketOpen = false; }
+
+  const whereLabel = (o: Order) =>
+    o.channel ? o.channel : o.order_type === 'DINE_IN' ? `${language.t('txDineIn')}${o.table_number ? ` · ${o.table_number}` : ''}` : language.t('txTakeAway');
+
+  async function handleTicketBtPrint() {
+    if (!order) return;
+    btPrinting = true;
+    btError = '';
+    try {
+      await printEscPos(buildKitchenTicketBytes(order, session.selectedStore?.name ?? 'Kasir', whereLabel(order)));
+    } catch (err) {
+      btError = err instanceof Error ? err.message : language.t('error');
+    } finally {
+      btPrinting = false;
+    }
+  }
 
   async function handleBtPrint() {
     if (!order) return;
@@ -348,7 +369,7 @@
         <div class="my-3 border-t border-dashed border-gray-300"></div>
 
         <div class="space-y-1 text-left text-xs">
-          {#if discountAmount > 0 || itemDiscountTotal > 0}
+          {#if discountAmount > 0 || itemDiscountTotal > 0 || (order.service_amount ?? 0) > 0 || (order.pb1_amount ?? 0) > 0}
             <div class="flex justify-between">
               <span class="text-gray-500">{language.t('subtotal')}</span>
               <span>{formatRupiah(subtotal)}</span>
@@ -365,6 +386,12 @@
               <span>{language.t('discounts')}{order.discount_code_snapshot ? ` (${order.discount_code_snapshot})` : ''}</span>
               <span>–{formatRupiah(discountAmount)}</span>
             </div>
+          {/if}
+          {#if (order.service_amount ?? 0) > 0}
+            <div class="flex justify-between"><span class="text-gray-500">{language.t('serviceLabel')}</span><span>{formatRupiah(order.service_amount ?? 0)}</span></div>
+          {/if}
+          {#if (order.pb1_amount ?? 0) > 0}
+            <div class="flex justify-between"><span class="text-gray-500">{language.t('pb1Label')}</span><span>{formatRupiah(order.pb1_amount ?? 0)}</span></div>
           {/if}
           <div class="flex justify-between border-t border-dashed border-gray-300 pt-1 text-base font-bold">
             <span>{language.t('total')}</span>
@@ -396,6 +423,49 @@
           <button class="btn-primary flex-1" onclick={handleBtPrint} disabled={btPrinting}>
             {btPrinting ? language.t('processing') : language.t('bluetooth')}
           </button>
+        {/if}
+      </div>
+    </section>
+  </div>
+{/if}
+
+<!-- ─── Kitchen ticket modal ──────────────────────────────────────── -->
+{#if ticketOpen && order}
+  <div class="fixed inset-0 z-50 flex items-end justify-center bg-[var(--om-scrim)] md:items-center" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) closeTicket(); }}>
+    <section class="receipt-modal flex max-h-[90vh] w-full max-w-xs flex-col overflow-hidden rounded-t-3xl bg-white md:rounded-3xl" role="dialog" aria-modal="true">
+      <div class="no-print flex justify-end px-3 pt-3">
+        <button class="grid h-8 w-8 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)]" onclick={closeTicket} aria-label={language.t('close')}><X class="h-4 w-4" /></button>
+      </div>
+      <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5 font-mono text-sm">
+        <div class="text-center">
+          <div class="text-base font-bold">{language.t('txTicket').toUpperCase()}</div>
+          <div class="text-xs text-gray-500">{session.selectedStore?.name ?? 'Kasir'}</div>
+          <div class="my-1 text-2xl font-bold">#{order.order_number ?? order.id.slice(0, 8)}</div>
+          <div class="text-xs text-gray-500">{formatDateTime(order.created_at)}</div>
+        </div>
+        <div class="my-3 border-t border-dashed border-gray-300"></div>
+        <div class="font-bold">{whereLabel(order)}</div>
+        {#if order.customer_name}<div>{order.customer_name}</div>{/if}
+        <div class="my-3 border-t border-dashed border-gray-300"></div>
+        <div class="space-y-2">
+          {#each order.items ?? [] as item}
+            {@const left = item.quantity - (item.void_qty ?? 0)}
+            {@const mods = [snapshotNames(item.options_snapshot), snapshotNames(item.addons_snapshot)].filter(Boolean).join(', ')}
+            {#if left > 0}
+              <div><div class="font-bold">{left}× {item.item_name_snapshot}</div>{#if mods}<div class="pl-5 text-xs text-gray-500">{mods}</div>{/if}</div>
+            {/if}
+          {/each}
+        </div>
+        {#if order.notes?.trim()}
+          <div class="my-3 border-t border-dashed border-gray-300"></div>
+          <div class="text-xs"><span class="font-bold">{language.t('txTicketNote')}:</span> {order.notes}</div>
+        {/if}
+      </div>
+      {#if btError}<div class="px-5 pb-2 text-center text-xs text-red-600">{btError}</div>{/if}
+      <div class="no-print flex gap-2 border-t border-[var(--border)] p-4">
+        <button class="btn-outline flex-1" onclick={() => window.print()}>{language.t('printReceipt')}</button>
+        {#if canPrint()}
+          <button class="btn-primary flex-1" onclick={handleTicketBtPrint} disabled={btPrinting}>{btPrinting ? language.t('processing') : language.t('bluetooth')}</button>
         {/if}
       </div>
     </section>

@@ -19,7 +19,7 @@
   };
   type MenuCategory = { id: string; name: string; icon?: string | null; };
   type MenuData = {
-    store: { id: string; name: string; description: string | null; logo_url: string | null; selforder_is_open: boolean; };
+    store: { id: string; name: string; description: string | null; logo_url: string | null; selforder_is_open: boolean; service_bp?: number; pb1_bp?: number; };
     categories: MenuCategory[];
     items: MenuItem[];
   };
@@ -54,6 +54,41 @@
   let cartEntries = $derived([...cart.values()].filter((v) => v.qty > 0));
   let cartCount   = $derived(cartEntries.reduce((s, v) => s + v.qty, 0));
   let cartTotal   = $derived(cartEntries.reduce((s, e) => s + entryUnitPrice(e) * e.qty, 0));
+  // Totals come from the server preview (automatic discounts, service on dine-in, PB1); the same rule
+  // computed locally covers the moment before the first response.
+  type Preview = { subtotal: number; discount_amount: number; service_amount: number; pb1_amount: number; total_amount: number };
+  let preview = $state<Preview | null>(null);
+  const feeRound = (amount: number, bp: number) => Math.floor((amount * bp + 5000) / 10000);
+  let localService = $derived(tableNumber ? feeRound(cartTotal, menu?.store.service_bp ?? 0) : 0);
+  let localPb1     = $derived(feeRound(cartTotal + localService, menu?.store.pb1_bp ?? 0));
+  let discountTotal = $derived(preview ? cartTotal - preview.subtotal + preview.discount_amount : 0);
+  let serviceFee  = $derived(preview ? preview.service_amount : localService);
+  let pb1Fee      = $derived(preview ? preview.pb1_amount : localPb1);
+  let grandTotal  = $derived(preview ? preview.total_amount : cartTotal + localService + localPb1);
+  let previewTimer: ReturnType<typeof setTimeout> | undefined;
+
+  $effect(() => {
+    const items = cartEntries.map(({ item, qty, selectedOptionChoiceIds, selectedAddonChoiceIds }) => ({
+      item_id: item.id,
+      quantity: qty,
+      selected_option_choice_ids: selectedOptionChoiceIds,
+      selected_addon_choice_ids: selectedAddonChoiceIds,
+    }));
+    const dine = tableNumber ? 'DINE_IN' : null;
+    clearTimeout(previewTimer);
+    if (!items.length || !storeId) {
+      preview = null;
+      return;
+    }
+    previewTimer = setTimeout(async () => {
+      try {
+        preview = await api.post<Preview>(`/public/stores/${storeId}/orders/preview`, { items, order_type: dine });
+      } catch {
+        preview = null;
+      }
+    }, 250);
+    return () => clearTimeout(previewTimer);
+  });
 
   let isAcceptingOrders = $derived(menu?.store.selforder_is_open ?? true);
 
@@ -399,7 +434,7 @@
         >
           <span class="grid h-7 w-7 place-items-center rounded-full bg-white/20 text-sm font-bold">{cartCount}</span>
           <span class="font-bold">{language.t('viewOrder')}</span>
-          <span class="font-bold">{formatRupiah(cartTotal)}</span>
+          <span class="font-bold">{formatRupiah(grandTotal)}</span>
         </button>
       </div>
     {/if}
@@ -482,9 +517,15 @@
       </div>
 
       <div class="border-t border-[var(--border)] px-5 py-4">
+        {#if serviceFee > 0 || pb1Fee > 0 || discountTotal > 0}
+          <div class="mb-1 flex items-center justify-between text-sm text-[var(--text-muted)]"><span>{language.t('subtotal')}</span><span>{formatRupiah(cartTotal)}</span></div>
+          {#if discountTotal > 0}<div class="mb-1 flex items-center justify-between text-sm text-[var(--om-brand)]"><span>{language.t('discounts')}</span><span>−{formatRupiah(discountTotal)}</span></div>{/if}
+          {#if serviceFee > 0}<div class="mb-1 flex items-center justify-between text-sm text-[var(--text-muted)]"><span>{language.t('serviceLabel')}</span><span>{formatRupiah(serviceFee)}</span></div>{/if}
+          {#if pb1Fee > 0}<div class="mb-1 flex items-center justify-between text-sm text-[var(--text-muted)]"><span>{language.t('pb1Label')}</span><span>{formatRupiah(pb1Fee)}</span></div>{/if}
+        {/if}
         <div class="mb-3 flex items-center justify-between text-sm">
           <span class="text-[var(--text-muted)]">{language.t('total')}</span>
-          <span class="text-xl font-bold text-[var(--espresso)]">{formatRupiah(cartTotal)}</span>
+          <span class="text-xl font-bold text-[var(--espresso)]">{formatRupiah(grandTotal)}</span>
         </div>
         {#if error}
           <p class="mb-2 text-xs text-red-600">{error}</p>

@@ -14,12 +14,15 @@ export const navGroups: NavGroup[] = [
       { href: '/dashboard', labelKey: 'dashboard', icon: 'space_dashboard', roles: ALL },
       { href: '/pos', labelKey: 'pos', icon: 'point_of_sale', roles: ALL },
       { href: '/transactions', labelKey: 'transactions', icon: 'receipt_long', roles: ALL },
+      { href: '/finance', labelKey: 'finance', subtitleKey: 'financeSubtitle', icon: 'account_balance_wallet', roles: MGMT },
+      { href: '/kitchen', labelKey: 'kitchen', subtitleKey: 'kitchenSubtitle', icon: 'coffee_maker', roles: ALL },
       { href: '/selforder', labelKey: 'selfOrder', icon: 'qr_code_2', roles: MGMT }
     ]
   },
   {
     labelKey: 'navMenu',
     items: [
+      { href: '/inventory', labelKey: 'inventory', subtitleKey: 'inventorySubtitle', icon: 'inventory_2', roles: MGMT },
       { href: '/products', labelKey: 'products', subtitleKey: 'productsHeaderSubtitle', icon: 'local_cafe', roles: MGMT },
       { href: '/discounts', labelKey: 'discounts', icon: 'sell', roles: MGMT }
     ]

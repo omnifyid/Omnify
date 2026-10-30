@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import JSON, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -34,6 +34,11 @@ class OrderItem(Base):
     options_snapshot: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # [{"group": "Extras", "label": "Extra Shot", "extra_price": 5000}]
     addons_snapshot: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    # kitchen checklist: line has been prepared
+    is_done: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # units taken off the paid order by a void; quantity/line_total stay as sold
+    void_qty: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     order: Mapped["Order"] = relationship(back_populates="items")
     item: Mapped["Item | None"] = relationship()

@@ -2,15 +2,14 @@
   import { api, mediaUrl } from '$lib/api/client';
   import { toOrderPayload } from '$lib/api/orders';
   import { paginatedItems } from '$lib/api/pagination';
-  import type { Category, Discount, Item, Order, PaymentMethod, PaginatedResponse } from '$lib/api/types';
+  import type { Category, ChannelSetting, Discount, Item, Order, OrderChannel, PaymentMethod, PaginatedResponse } from '$lib/api/types';
   import { language } from '$lib/i18n/language.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { getItemPrice } from '$lib/utils/catalog';
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
-  import { getAddonPriceTotal, getChoiceLabel, getChoicePrice, getGroupChoices, getGroupLabel, hasItemModifiers } from '$lib/utils/modifiers';
-  import { LayoutGrid, List, Menu, RotateCcw, ShoppingCart, Tag, X } from 'lucide-svelte';
-  import Sidebar from '$lib/components/Sidebar.svelte';
+  import { getChoiceLabel, getChoicePrice, getGroupChoices, getGroupLabel, hasItemModifiers } from '$lib/utils/modifiers';
+  import { LayoutGrid, List, RotateCcw, Search, ShoppingCart, Tag, X } from 'lucide-svelte';
   import { printEscPos, canPrint } from '$lib/utils/bluetooth-printer';
   import { buildReceiptBytes } from '$lib/utils/escpos';
 
@@ -33,6 +32,7 @@
     if (method === 'CASH') return language.t('cash');
     if (method === 'CARD') return language.t('card');
     if (method === 'TRANSFER') return language.t('transfer');
+    if (method === 'PLATFORM') return language.t('online');
     return 'QRIS';
   }
 
@@ -52,6 +52,74 @@
   let selectedOptionChoiceIds = $state<Record<string, string>>({});
   let selectedAddonChoiceIds = $state<string[]>([]);
 
+  // ── Online food platforms ─────────────────────────────────
+  const CHANNEL_META: Record<OrderChannel, { label: string; logo: string }> = {
+    GOFOOD: { label: 'GoFood', logo: '/images/channels/gofood.svg' },
+    GRABFOOD: { label: 'GrabFood', logo: '/images/channels/grabfood.svg' },
+    SHOPEEFOOD: { label: 'ShopeeFood', logo: '/images/channels/shopeefood.svg' }
+  };
+  let channelSettings = $state<ChannelSetting[]>([]);
+  let enabledChannels = $derived(channelSettings.filter((c) => c.enabled));
+  let hasOnline = $derived(enabledChannels.length > 0);
+  let onlineMode = $state(false);
+  let channel = $state<OrderChannel | null>(null);
+  let markupBp = $derived(onlineMode ? (channelSettings.find((c) => c.channel === channel)?.markup_bp ?? 0) : 0);
+  let taxBp = $derived(session.selectedStore?.tax_bp ?? 0);
+  let onlineOrderId = $state('');
+  let onlineCustomer = $state('');
+  let onlineDriver = $state('');
+  let onlineNote = $state('');
+  let onlineAppTotal = $state('');
+  let appTotalNum = $derived(parseInt(onlineAppTotal.replace(/\D/g, '') || '0', 10));
+  let onlineValid = $derived(!!channel && !!onlineOrderId.trim() && !!onlineCustomer.trim() && appTotalNum > 0);
+
+  /** Online price: amount × (1 + markup), rounded up to the next Rp500 (mirrors the backend). */
+  function mk(amount: number) {
+    if (!markupBp || amount <= 0) return amount;
+    return Math.ceil((amount * (10000 + markupBp)) / (10000 * 500)) * 500;
+  }
+
+  /** Price of one unit of the item (before add-ons) in the current mode. */
+  function itemPrice(item: Item) {
+    const manual = onlineMode && channel ? item.channel_prices?.[channel] : undefined;
+    return manual || mk(getItemPrice(item));
+  }
+
+  function addonTotal(item: Item, ids: string[]) {
+    return (item.addon_groups ?? []).reduce(
+      (sum, group) => sum + getGroupChoices(group).reduce((gs, c) => gs + (ids.includes(c.id) ? mk(getChoicePrice(c)) : 0), 0),
+      0
+    );
+  }
+
+  function pickType(type: 'DINE_IN' | 'TAKE_AWAY') {
+    if (onlineMode) setOnline(false);
+    orderType = orderType === type ? null : type;
+  }
+
+  function setOnline(on: boolean) {
+    onlineMode = on;
+    promoResult = null;
+    if (on) {
+      orderType = null;
+      posTableNumber = null;
+      discountCode = '';
+      appliedDiscountLabel = '';
+      if (!channel || !enabledChannels.some((c) => c.channel === channel)) channel = enabledChannels[0]?.channel ?? null;
+    } else {
+      resetOnlineForm();
+      schedulePromoCheck();
+    }
+  }
+
+  function resetOnlineForm() {
+    onlineOrderId = '';
+    onlineCustomer = '';
+    onlineDriver = '';
+    onlineNote = '';
+    onlineAppTotal = '';
+  }
+
   let filteredItems = $derived(
     items.filter((item) => {
       const matchesCategory = activeCategoryId === 'all' || item.category_id === activeCategoryId;
@@ -60,11 +128,21 @@
     })
   );
   let subtotal = $derived(cart.reduce((sum, line) => sum + getLineUnitPrice(line) * line.quantity, 0));
+  let onlineTax = $derived(taxBp > 0 ? subtotal - Math.round((subtotal * 10000) / (10000 + taxBp)) : 0);
+
+  let posDineInEnabled = $derived(session.selectedStore?.pos_dine_in_enabled ?? false);
+  let orderType = $state<'DINE_IN' | 'TAKE_AWAY' | null>(null);
+  let dineInActive = $derived(posDineInEnabled && !onlineMode && orderType === 'DINE_IN');
 
   type PromoResult = { valid: boolean; subtotal: number; discount_amount: number; total_amount: number; message: string };
+  const feeRound = (amount: number, bp: number) => Math.floor((amount * bp + 5000) / 10000);
   let promoResult = $state<PromoResult | null>(null);
   let promoLoading = $state(false);
-  let totalDue = $derived(promoResult?.valid ? promoResult.total_amount : subtotal);
+  let netDue = $derived(promoResult?.valid ? promoResult.total_amount : subtotal);
+  // Service (dine-in only) and PB1 mirror order_service.direct_order_fees; the server is authoritative.
+  let serviceFee = $derived(dineInActive ? feeRound(netDue, session.selectedStore?.service_bp ?? 0) : 0);
+  let pb1Fee = $derived(onlineMode ? 0 : feeRound(netDue + serviceFee, session.selectedStore?.pb1_bp ?? 0));
+  let totalDue = $derived(netDue + serviceFee + pb1Fee);
 
   let cashAmount = $state('0');
   let cashModalOpen = $state(false);
@@ -100,7 +178,9 @@
   }
 
   function handleCharge() {
-    if (paymentMethod === 'CASH') {
+    if (onlineMode) {
+      void checkout();
+    } else if (paymentMethod === 'CASH') {
       cashAmount = '0';
       mobileCartOpen = false;
       cashModalOpen = true;
@@ -110,7 +190,7 @@
   }
   let totalItems = $derived(cart.reduce((sum, line) => sum + line.quantity, 0));
   let activeCategoryName = $derived(activeCategoryId === 'all' ? language.t('allMenu') : categories.find((category) => category.id === activeCategoryId)?.name ?? language.t('menu'));
-  let modifierUnitPrice = $derived(modifierItem ? getItemPrice(modifierItem) + getAddonPriceTotal(modifierItem, selectedAddonChoiceIds) : 0);
+  let modifierUnitPrice = $derived(modifierItem ? itemPrice(modifierItem) + addonTotal(modifierItem, selectedAddonChoiceIds) : 0);
   let canAddModifierItem = $derived(
     modifierItem
       ? (modifierItem.option_groups ?? []).every((group) => !group.required || Boolean(selectedOptionChoiceIds[group.id]))
@@ -131,6 +211,8 @@
       categories = paginatedItems(catsRes);
       items = paginatedItems(itemsRes);
       discounts = paginatedItems(discountsRes);
+      channelSettings = await api.get<ChannelSetting[]>(`/stores/${storeId}/channels`).catch(() => []);
+      if (onlineMode && !enabledChannels.length) setOnline(false);
     } catch (err) { error = err instanceof Error ? err.message : language.t('error'); }
     finally { loading = false; }
   }
@@ -153,7 +235,7 @@
   }
 
   function getLineUnitPrice(line: CartLine) {
-    return getItemPrice(line.item) + getAddonPriceTotal(line.item, line.addonChoiceIds);
+    return itemPrice(line.item) + addonTotal(line.item, line.addonChoiceIds);
   }
 
   function addItem(item: Item) {
@@ -246,6 +328,7 @@
     try {
       const result = await api.post<PromoResult>(`/stores/${storeId}/orders/preview`, {
         discount_code: discountCode.trim(),
+        order_type: dineInActive ? 'DINE_IN' : null,
         items: cartItemsPayload()
       });
       promoResult = result;
@@ -283,6 +366,7 @@
 
   function schedulePromoCheck() {
     if (autoPromoTimer !== null) clearTimeout(autoPromoTimer);
+    if (onlineMode) { promoResult = null; return; }
     if (cart.length === 0) { promoResult = null; return; }
     autoPromoTimer = setTimeout(() => {
       if (discountCode) void checkPromo();
@@ -320,8 +404,14 @@
     checkingOut = true;
     error = '';
     try {
+      const online = onlineMode && channel;
       const order = await api.post<Order>(`/stores/${storeId}/orders`, toOrderPayload({
         paymentMethod,
+        channel: online ? channel : null,
+        channelOrderId: online ? onlineOrderId : null,
+        appTotal: online ? appTotalNum : null,
+        driverName: online ? onlineDriver : null,
+        notes: online ? onlineNote.trim() || null : null,
         discountCode,
         items: cart.map((line) => ({
           itemId: line.item.id,
@@ -329,15 +419,16 @@
           optionChoiceIds: line.optionChoiceIds,
           addonChoiceIds: line.addonChoiceIds
         })),
-        orderType: posDineInEnabled ? orderType : null,
-        tableNumber: posTableEnabled ? posTableNumber : null,
-        customerName: posCustomerNameEnabled && customerName ? customerName : null,
+        orderType: posDineInEnabled && !online ? orderType : null,
+        tableNumber: posTableEnabled && !online ? posTableNumber : null,
+        customerName: online ? onlineCustomer.trim() : posCustomerNameEnabled && customerName ? customerName : null,
       }));
       cart = [];
       discountCode = '';
       appliedDiscountLabel = '';
       promoResult = null;
       resetOrderMeta();
+      resetOnlineForm();
       receiptCashPaid = paymentMethod === 'CASH' ? cashPaid : 0;
       cashAmount = '0';
       cashModalOpen = false;
@@ -382,13 +473,11 @@
   }
 
   // ── POS order metadata ────────────────────────────────────
-  let posDineInEnabled = $derived(session.selectedStore?.pos_dine_in_enabled ?? false);
   let posTableEnabled = $derived(session.selectedStore?.pos_table_enabled ?? false);
   let posTableCount = $derived(session.selectedStore?.pos_table_count ?? 10);
   let posCustomerNameEnabled = $derived(session.selectedStore?.pos_customer_name_enabled ?? false);
   let hasOrderInfo = $derived(posDineInEnabled || posTableEnabled || posCustomerNameEnabled);
 
-  let orderType = $state<'DINE_IN' | 'TAKE_AWAY' | null>(null);
   let posTableNumber = $state<string | null>(null);
   let customerName = $state('');
   let tableModalOpen = $state(false);
@@ -400,13 +489,12 @@
   }
 
   let mobileCartOpen = $state(false);
-  let sidebarOpen = $state(false);
 
   const VIEW_KEY = 'kasir.pos.viewMode';
   let viewMode = $state<'grid' | 'list'>((localStorage.getItem(VIEW_KEY) as 'grid' | 'list') ?? 'grid');
 
-  function toggleViewMode() {
-    viewMode = viewMode === 'grid' ? 'list' : 'grid';
+  function setViewMode(mode: 'grid' | 'list') {
+    viewMode = mode;
     localStorage.setItem(VIEW_KEY, viewMode);
   }
 
@@ -525,72 +613,104 @@
   </div>
 {/if}
 
+{#snippet typeTabs()}
+  <div class="flex flex-wrap gap-1.5">
+    {#if posDineInEnabled}
+      <button class="meta-type-btn {!onlineMode && orderType === 'DINE_IN' ? 'meta-type-btn--active' : ''}" onclick={() => pickType('DINE_IN')}>{language.t('dineIn')}</button>
+      <button class="meta-type-btn {!onlineMode && orderType === 'TAKE_AWAY' ? 'meta-type-btn--active' : ''}" onclick={() => pickType('TAKE_AWAY')}>{language.t('takeAway')}</button>
+    {/if}
+    {#if hasOnline}
+      <button class="meta-type-btn {onlineMode ? 'meta-type-btn--active' : ''}" onclick={() => setOnline(!onlineMode)}>{language.t('online')}</button>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet onlineForm()}
+  {#if onlineMode}
+    <div class="online-form">
+      <div class="online-channels">
+        {#each enabledChannels as c (c.channel)}
+          <button class="online-ch {channel === c.channel ? 'online-ch--active' : ''}" aria-label={CHANNEL_META[c.channel].label} aria-pressed={channel === c.channel} onclick={() => (channel = c.channel)}>
+            <img src={CHANNEL_META[c.channel].logo} alt={CHANNEL_META[c.channel].label} />
+          </button>
+        {/each}
+      </div>
+      <label class="block">
+        <span class="online-lbl">{language.t('onlinePlatformId')} *</span>
+        <input class="field text-sm" placeholder={language.t('onlinePlatformIdHint')} bind:value={onlineOrderId} />
+      </label>
+      <label class="block">
+        <span class="online-lbl">{language.t('onlineCustomer')} *</span>
+        <input class="field text-sm" bind:value={onlineCustomer} />
+      </label>
+      <label class="block">
+        <span class="online-lbl">{language.t('onlineDriver')}</span>
+        <input class="field text-sm" maxlength="100" bind:value={onlineDriver} />
+      </label>
+      <label class="block">
+        <span class="online-lbl">{language.t('onlineNote')}</span>
+        <input class="field text-sm" bind:value={onlineNote} />
+      </label>
+      <label class="block">
+        <span class="online-lbl">{language.t('onlineAppTotal')} (Rp) *</span>
+        <input
+          class="field text-right text-sm"
+          type="text"
+          inputmode="numeric"
+          placeholder="0"
+          value={onlineAppTotal}
+          oninput={(e) => { const d = e.currentTarget.value.replace(/\D/g, ''); onlineAppTotal = d ? parseInt(d, 10).toLocaleString('id-ID') : ''; e.currentTarget.value = onlineAppTotal; }}
+        />
+      </label>
+      {#if appTotalNum > 0 && appTotalNum !== subtotal}
+        <div class="online-warn" role="alert">{language.t('onlineMismatch')} {formatRupiah(subtotal)}</div>
+      {/if}
+      {#if onlineTax > 0}
+        <div class="online-tax">{language.t('onlineTaxIncluded')} {(taxBp / 100).toFixed(taxBp % 100 ? 2 : 0)}% · {formatRupiah(onlineTax)}</div>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
 <div class="pos-shell">
-  <Sidebar bind:open={sidebarOpen} modal />
-
-  <!-- Desktop category rail -->
-  <aside class="cat-rail">
-    <a href="/dashboard" class="cat-logo display-font">K</a>
-
-    <button
-      class="cat-btn {activeCategoryId === 'all' ? 'cat-btn--active' : ''}"
-      onclick={() => activeCategoryId = 'all'}
-    >
-      <span class="cat-icon">☕</span>
-      <span class="cat-lbl">{language.t('all')}</span>
-    </button>
-
-    {#each categories as category}
-      <button
-        class="cat-btn {activeCategoryId === category.id ? 'cat-btn--active' : ''}"
-        onclick={() => activeCategoryId = category.id}
-      >
-        <span class="cat-icon">{category.icon ?? '🍽️'}</span>
-        <span class="cat-lbl">{category.name}</span>
-      </button>
-    {/each}
-  </aside>
-
   <!-- Main menu section -->
   <section class="menu-section">
 
-    <!-- Topbar -->
-    <div class="menu-topbar">
-      <button class="icon-btn xl:hidden" onclick={() => sidebarOpen = true}><Menu size={18} /></button>
-
-      <div class="store-info hidden md:block">
-        <div class="store-name">{session.selectedStore?.name ?? language.t('pos')}</div>
-        <div class="store-user">{auth.user?.email ?? language.t('roleOperator')}</div>
+    <!-- Category chips + search + view toggle -->
+    <div class="pos-top">
+      <div class="cat-strip no-scrollbar">
+        <button
+          class="cat-chip {activeCategoryId === 'all' ? 'cat-chip--active' : ''}"
+          onclick={() => activeCategoryId = 'all'}
+        >{language.t('all')}</button>
+        {#each categories as category}
+          <button
+            class="cat-chip {activeCategoryId === category.id ? 'cat-chip--active' : ''}"
+            onclick={() => activeCategoryId = category.id}
+          >{category.icon ?? ''} {category.name}</button>
+        {/each}
       </div>
 
-      <input class="search-input" placeholder={language.t('searchMenu')} bind:value={search} />
-
-      <button class="icon-btn" onclick={toggleViewMode} title={language.t('menu')}>
-        {#if viewMode === 'grid'}<List size={18} />{:else}<LayoutGrid size={18} />{/if}
-      </button>
+      <div class="pos-tools">
+        <label class="search-box">
+          <Search size={18} />
+          <input placeholder={language.t('searchMenu')} bind:value={search} />
+        </label>
+        <div class="view-toggle" role="group" aria-label={language.t('menu')}>
+          <button class="view-btn {viewMode === 'grid' ? 'view-btn--active' : ''}" aria-pressed={viewMode === 'grid'} aria-label="Grid" onclick={() => setViewMode('grid')}><LayoutGrid size={20} /></button>
+          <button class="view-btn {viewMode === 'list' ? 'view-btn--active' : ''}" aria-pressed={viewMode === 'list'} aria-label="List" onclick={() => setViewMode('list')}><List size={20} /></button>
+        </div>
+      </div>
     </div>
 
     {#if error}
       <div class="menu-error">{error}</div>
     {/if}
 
-    <!-- Mobile category strip -->
-    <div class="cat-strip no-scrollbar">
-      <button
-        class="cat-chip {activeCategoryId === 'all' ? 'cat-chip--active' : ''}"
-        onclick={() => activeCategoryId = 'all'}
-      >☕ {language.t('all')}</button>
-      {#each categories as category}
-        <button
-          class="cat-chip {activeCategoryId === category.id ? 'cat-chip--active' : ''}"
-          onclick={() => activeCategoryId = category.id}
-        >{category.icon ?? '🍽️'} {category.name}</button>
-      {/each}
-    </div>
-
     <!-- Section heading -->
     <div class="menu-heading">
       <h1 class="display-font menu-title">{activeCategoryName}</h1>
+      {#if onlineMode && channel}<span class="menu-count">· {language.t('onlinePriceNote')} {CHANNEL_META[channel].label}</span>{/if}
       <span class="menu-count">{filteredItems.length} {filteredItems.length === 1 ? language.t('item') : language.t('items')}</span>
     </div>
 
@@ -634,7 +754,7 @@
             </div>
             <div class="item-info">
               <div class="item-name">{item.name}</div>
-              <div class="item-price">{formatRupiah(getItemPrice(item))}</div>
+              <div class="item-price">{formatRupiah(itemPrice(item))}</div>
             </div>
           </button>
         {:else}
@@ -672,7 +792,7 @@
                 {#if oos}<span class="tag tag--oos">{language.t('stockOut')}</span>{/if}
                 {#if tracked && !oos}<span class="tag tag--stock">{language.t('stockRemaining')} {item.stock}</span>{/if}
               </div>
-              <div class="list-price">{formatRupiah(getItemPrice(item))}</div>
+              <div class="list-price">{formatRupiah(itemPrice(item))}</div>
             </div>
             {#if qty}
               <span class="qty-pill">{qty}</span>
@@ -685,37 +805,22 @@
     {/if}
 
     <!-- Mobile cart bar -->
-    <div class="mobile-cart-bar">
-      <button
-        class="mobile-cart-btn {cart.length === 0 ? 'mobile-cart-btn--empty' : ''}"
-        onclick={() => mobileCartOpen = true}
-      >
-        <div class="flex items-center gap-2">
-          <ShoppingCart size={18} />
-          <span>{cart.length === 0 ? language.t('cartEmpty') : `${totalItems} ${totalItems === 1 ? language.t('item') : language.t('items')}`}</span>
-        </div>
-        <span>{formatRupiah(subtotal)}</span>
+    {#if cart.length > 0}
+      <button class="mobile-cart-btn" onclick={() => mobileCartOpen = true}>
+        <span class="mobile-cart-count">{totalItems}</span>
+        <span class="mobile-cart-lbl">{language.t('order')}</span>
+        <span class="mobile-cart-total">{formatRupiah(subtotal)}</span>
+        <ShoppingCart size={18} />
       </button>
-    </div>
+    {/if}
   </section>
 
   <!-- Desktop cart panel -->
   <aside class="cart-panel">
     <div class="cart-header">
       <div class="flex min-w-0 flex-1 flex-col gap-1.5">
-        {#if posDineInEnabled}
-          <div class="flex gap-1.5">
-            <button
-              class="meta-type-btn {orderType === 'DINE_IN' ? 'meta-type-btn--active' : ''}"
-              onclick={() => orderType = orderType === 'DINE_IN' ? null : 'DINE_IN'}
-            >{language.t('dineIn')}</button>
-            <button
-              class="meta-type-btn {orderType === 'TAKE_AWAY' ? 'meta-type-btn--active' : ''}"
-              onclick={() => orderType = orderType === 'TAKE_AWAY' ? null : 'TAKE_AWAY'}
-            >{language.t('takeAway')}</button>
-          </div>
-        {/if}
-        {#if posTableEnabled}
+        {#if posDineInEnabled || hasOnline}{@render typeTabs()}{/if}
+        {#if posTableEnabled && !onlineMode}
           <div class="flex items-center gap-2">
             <button
               class="meta-table-btn {posTableNumber ? 'meta-table-btn--selected' : ''}"
@@ -726,7 +831,7 @@
             {/if}
           </div>
         {/if}
-        {#if !posDineInEnabled && !posTableEnabled}
+        {#if !posDineInEnabled && !posTableEnabled && !hasOnline}
           <h2 class="display-font cart-title">{language.t('order')}</h2>
         {/if}
       </div>
@@ -760,7 +865,8 @@
     </div>
 
     <div class="cart-footer">
-      {#if posCustomerNameEnabled}
+      {@render onlineForm()}
+      {#if posCustomerNameEnabled && !onlineMode}
         <div class="order-meta">
           <div class="meta-row">
             <input
@@ -771,6 +877,8 @@
           </div>
         </div>
       {/if}
+
+      {#if !onlineMode}
 
       <!-- Discount row -->
       <div class="discount-row">
@@ -814,6 +922,8 @@
         {/each}
       </div>
 
+      {/if}
+
       <div class="order-summary">
         <div class="summary-row">
           <span>{language.t('subtotal')}</span>
@@ -825,14 +935,20 @@
             <span>−{formatRupiah(promoResult.discount_amount)}</span>
           </div>
         {/if}
+        {#if serviceFee > 0}
+          <div class="summary-row"><span>{language.t('serviceLabel')}</span><span>{formatRupiah(serviceFee)}</span></div>
+        {/if}
+        {#if pb1Fee > 0}
+          <div class="summary-row"><span>{language.t('pb1Label')}</span><span>{formatRupiah(pb1Fee)}</span></div>
+        {/if}
       </div>
 
       <button
         class="charge-btn"
-        disabled={cart.length === 0 || checkingOut}
+        disabled={cart.length === 0 || checkingOut || (onlineMode && !onlineValid)}
         onclick={handleCharge}
       >
-        {checkingOut ? language.t('processing') : `${language.t('charge')} ${formatRupiah(totalDue)}`}
+        {checkingOut ? language.t('processing') : `${language.t(onlineMode ? 'onlineSend' : 'charge')} ${formatRupiah(totalDue)}`}
       </button>
     </div>
   </aside>
@@ -848,19 +964,8 @@
     <div class="cart-sheet" role="dialog" aria-modal="true" aria-label="Cart" tabindex="-1">
       <div class="cart-header sheet-header">
         <div class="flex min-w-0 flex-1 flex-col gap-1.5">
-          {#if posDineInEnabled}
-            <div class="flex gap-1.5">
-              <button
-                class="meta-type-btn {orderType === 'DINE_IN' ? 'meta-type-btn--active' : ''}"
-                onclick={() => orderType = orderType === 'DINE_IN' ? null : 'DINE_IN'}
-              >{language.t('dineIn')}</button>
-              <button
-                class="meta-type-btn {orderType === 'TAKE_AWAY' ? 'meta-type-btn--active' : ''}"
-                onclick={() => orderType = orderType === 'TAKE_AWAY' ? null : 'TAKE_AWAY'}
-              >{language.t('takeAway')}</button>
-            </div>
-          {/if}
-          {#if posTableEnabled}
+          {#if posDineInEnabled || hasOnline}{@render typeTabs()}{/if}
+          {#if posTableEnabled && !onlineMode}
             <div class="flex items-center gap-2">
               <button
                 class="meta-table-btn {posTableNumber ? 'meta-table-btn--selected' : ''}"
@@ -871,7 +976,7 @@
               {/if}
             </div>
           {/if}
-          {#if !posDineInEnabled && !posTableEnabled}
+          {#if !posDineInEnabled && !posTableEnabled && !hasOnline}
             <h2 class="display-font cart-title">{language.t('order')}</h2>
           {/if}
         </div>
@@ -906,7 +1011,8 @@
       </div>
 
       <div class="cart-footer">
-        {#if posCustomerNameEnabled}
+        {@render onlineForm()}
+      {#if posCustomerNameEnabled && !onlineMode}
           <div class="order-meta">
             <div class="meta-row">
               <input
@@ -919,6 +1025,7 @@
         {/if}
 
         <!-- Discount row (mobile) -->
+        {#if !onlineMode}
         <div class="discount-row">
           {#if promoResult?.valid && promoResult.discount_amount > 0}
             <div class="discount-chip">
@@ -958,6 +1065,7 @@
             </button>
           {/each}
         </div>
+        {/if}
         <div class="order-summary">
           <div class="summary-row"><span>{language.t('subtotal')}</span><span>{formatRupiah(subtotal)}</span></div>
           {#if promoResult?.valid && promoResult.discount_amount > 0}
@@ -966,9 +1074,15 @@
               <span>−{formatRupiah(promoResult.discount_amount)}</span>
             </div>
           {/if}
+          {#if serviceFee > 0}
+            <div class="summary-row"><span>{language.t('serviceLabel')}</span><span>{formatRupiah(serviceFee)}</span></div>
+          {/if}
+          {#if pb1Fee > 0}
+            <div class="summary-row"><span>{language.t('pb1Label')}</span><span>{formatRupiah(pb1Fee)}</span></div>
+          {/if}
         </div>
-        <button class="charge-btn" disabled={cart.length === 0 || checkingOut} onclick={handleCharge}>
-          {checkingOut ? language.t('processing') : `${language.t('charge')} ${formatRupiah(totalDue)}`}
+        <button class="charge-btn" disabled={cart.length === 0 || checkingOut || (onlineMode && !onlineValid)} onclick={handleCharge}>
+          {checkingOut ? language.t('processing') : `${language.t(onlineMode ? 'onlineSend' : 'charge')} ${formatRupiah(totalDue)}`}
         </button>
       </div>
     </div>
@@ -1012,7 +1126,7 @@
         </div>
 
         <div class="receipt-totals">
-          {#if (receiptOrder.discount_amount ?? 0) > 0 || itemDiscountTotal > 0}
+          {#if (receiptOrder.discount_amount ?? 0) > 0 || itemDiscountTotal > 0 || (receiptOrder.service_amount ?? 0) > 0 || (receiptOrder.pb1_amount ?? 0) > 0}
             <div class="receipt-total-row">
               <span>{language.t('subtotal')}</span><span>{formatRupiah(receiptOrder.subtotal ?? 0)}</span>
             </div>
@@ -1028,6 +1142,12 @@
               <span>{language.t('discounts')}{receiptOrder.discount_code_snapshot ? ` (${receiptOrder.discount_code_snapshot})` : ''}</span>
               <span>−{formatRupiah(receiptOrder.discount_amount ?? 0)}</span>
             </div>
+          {/if}
+          {#if (receiptOrder.service_amount ?? 0) > 0}
+            <div class="receipt-total-row"><span>{language.t('serviceLabel')}</span><span>{formatRupiah(receiptOrder.service_amount ?? 0)}</span></div>
+          {/if}
+          {#if (receiptOrder.pb1_amount ?? 0) > 0}
+            <div class="receipt-total-row"><span>{language.t('pb1Label')}</span><span>{formatRupiah(receiptOrder.pb1_amount ?? 0)}</span></div>
           {/if}
           <div class="receipt-total-row receipt-total-row--grand display-font">
             <span>{language.t('total')}</span><span>{formatRupiah(receiptOrder.total_amount)}</span>
@@ -1169,7 +1289,7 @@
         </div>
         <div class="modifier-info">
           <h2 class="display-font modifier-name">{modifierItem.name}</h2>
-          <p class="modifier-base">{language.t('base')} {formatRupiah(getItemPrice(modifierItem))}</p>
+          <p class="modifier-base">{language.t('base')} {formatRupiah(itemPrice(modifierItem))}</p>
         </div>
         <button class="icon-btn" onclick={closeModifierModal}><X size={18} /></button>
       </div>
@@ -1205,7 +1325,7 @@
                     onclick={() => toggleAddon(choice.id)}
                   >
                     {getChoiceLabel(choice)}
-                    <span class="choice-price">+{formatRupiah(getChoicePrice(choice))}</span>
+                    <span class="choice-price">+{formatRupiah(mk(getChoicePrice(choice)))}</span>
                   </button>
                 {/each}
               </div>
@@ -1237,71 +1357,13 @@
 <style>
   /* ─── Shell ─── */
   .pos-shell {
+    position: relative;
     display: flex;
-    height: 100vh;
-    height: 100dvh;
-    min-height: 600px;
+    height: 100%;
+    min-height: 0;
     overflow: hidden;
     background: var(--background);
   }
-
-  /* ─── Category Rail ─── */
-  .cat-rail {
-    display: none;
-    width: 76px;
-    flex-shrink: 0;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    background: var(--white);
-    border-right: 1px solid var(--border);
-    padding: 12px 6px 16px;
-    scrollbar-width: none;
-  }
-  .cat-rail::-webkit-scrollbar { display: none; }
-  @media (min-width: 1024px) { .cat-rail { display: flex; } }
-
-  .cat-logo {
-    display: grid;
-    place-items: center;
-    width: 44px;
-    height: 44px;
-    border-radius: 14px;
-    background: var(--om-ink);
-    color: var(--om-brand-on-dark);
-    font-size: 1.25rem;
-    font-weight: 700;
-    margin-bottom: 12px;
-    text-decoration: none;
-    flex-shrink: 0;
-    transition: background 0.15s;
-  }
-  .cat-logo:hover { background: var(--warm-brown); }
-
-  .cat-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 5px;
-    width: 64px;
-    padding: 10px 4px;
-    border-radius: 14px;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-    color: var(--text-muted);
-  }
-  .cat-btn:hover { background: var(--cream); color: var(--espresso); }
-  .cat-btn--active {
-    background: var(--cream);
-    color: var(--espresso);
-    box-shadow: inset 3px 0 0 var(--warm-brown);
-  }
-  .cat-icon { font-size: 1.5rem; line-height: 1; }
-  .cat-lbl { font-size: 0.68rem; font-weight: 700; text-align: center; line-height: 1.2; max-width: 100%; word-break: break-word; }
 
   /* ─── Menu Section ─── */
   .menu-section {
@@ -1312,50 +1374,66 @@
     background: var(--background);
   }
 
-  /* Topbar */
-  .menu-topbar {
+  /* Top bar: chips + search + view toggle */
+  .pos-top {
+    display: flex;
+    flex-wrap: wrap-reverse;
+    align-items: flex-end;
+    gap: 10px;
+    padding: var(--om-page-pad) var(--om-page-pad) 6px;
+    flex-shrink: 0;
+  }
+  .pos-tools {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
-    background: var(--white);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
+    margin-left: auto;
+    min-width: 0;
   }
-  .store-info { min-width: 140px; }
-  .store-name { font-size: 0.82rem; font-weight: 700; color: var(--espresso); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .store-user { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  .search-input {
+  .search-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: var(--om-tap);
+    padding: 0 12px;
+    width: 240px;
+    max-width: 100%;
+    min-width: 0;
+    border: 1px solid var(--om-border);
+    border-radius: 10px;
+    background: var(--om-surface);
+    color: var(--om-text-secondary);
+  }
+  .search-box:focus-within { border-color: var(--om-ink); }
+  .search-box input {
     flex: 1;
     min-width: 0;
-    padding: 0.5rem 0.85rem;
-    min-height: var(--om-tap);
-    border-radius: var(--om-r-input);
-    border: 1px solid var(--om-border-strong);
-    background: var(--om-surface);
+    border: none;
+    outline: none;
+    background: transparent;
     color: var(--om-ink);
     font-size: 16px;
-    outline: none;
-    transition: border-color 0.15s;
   }
-  .search-input::placeholder { color: var(--text-muted); }
-  .search-input:focus { border-color: var(--om-ink); }
-
-  .icon-btn {
+  .view-toggle {
+    display: flex;
+    gap: 4px;
+    padding: 3px;
+    border-radius: 12px;
+    background: var(--om-fill-muted);
+    flex-shrink: 0;
+  }
+  .view-btn {
     display: grid;
     place-items: center;
-    width: 36px;
-    height: 36px;
-    flex-shrink: 0;
-    border-radius: 10px;
-    background: transparent;
+    width: 44px;
+    height: 44px;
     border: none;
-    color: var(--espresso);
+    border-radius: 9px;
+    background: transparent;
+    color: var(--om-ink);
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
   }
-  .icon-btn:hover { background: var(--cream); color: var(--dark); }
+  .view-btn--active { background: var(--om-surface); box-shadow: 0 1px 2px rgba(16, 20, 15, 0.12); }
 
   .menu-error {
     margin: 12px 14px 0;
@@ -1368,17 +1446,14 @@
     flex-shrink: 0;
   }
 
-  /* Mobile category strip */
+  /* Category chips */
   .cat-strip {
     display: flex;
+    flex: 1 1 240px;
+    min-width: 0;
     gap: 6px;
-    padding: 10px 14px;
     overflow-x: auto;
-    flex-shrink: 0;
-    background: var(--white);
-    border-bottom: 1px solid var(--border);
   }
-  @media (min-width: 1024px) { .cat-strip { display: none; } }
 
   .cat-chip {
     flex-shrink: 0;
@@ -1402,7 +1477,7 @@
     display: flex;
     align-items: baseline;
     gap: 10px;
-    padding: 14px 16px 8px;
+    padding: 14px var(--om-page-pad) 8px;
     flex-shrink: 0;
   }
   .menu-title { font-size: 16px; font-weight: 600; color: var(--espresso); margin: 0; }
@@ -1595,32 +1670,42 @@
   }
 
   /* ─── Mobile Cart Bar ─── */
-  .mobile-cart-bar {
-    flex-shrink: 0;
-    padding: 10px 14px;
-    background: var(--white);
-    border-top: 1px solid var(--border);
-  }
-  @media (min-width: 768px) {
-    .mobile-cart-bar { display: none; }
-  }
   .mobile-cart-btn {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 5;
     display: flex;
-    width: 100%;
     align-items: center;
-    justify-content: space-between;
-    padding: 14px 18px;
-    border-radius: 14px;
-    background: var(--primary);
-    color: white;
-    font-size: 0.9rem;
-    font-weight: 700;
+    gap: 12px;
+    height: 58px;
+    padding: 0 14px 0 12px;
+    border-radius: 16px;
     border: none;
+    background: var(--om-brand);
+    color: white;
+    font-weight: 600;
+    box-shadow: 0 10px 24px rgba(16, 20, 15, 0.28);
     cursor: pointer;
-    transition: background 0.15s;
   }
-  .mobile-cart-btn:hover { background: var(--dark); }
-  .mobile-cart-btn--empty { background: rgba(92,61,46,0.45); }
+  .mobile-cart-count {
+    display: grid;
+    place-items: center;
+    min-width: 30px;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: 15px;
+    background: var(--om-brand-on-dark);
+    color: var(--om-ink);
+    font-size: 12px;
+    font-weight: 800;
+  }
+  .mobile-cart-lbl { flex: 1; text-align: left; }
+  .mobile-cart-total { font-weight: 700; font-variant-numeric: tabular-nums; }
+  @media (min-width: 768px) {
+    .mobile-cart-btn { display: none; }
+  }
 
   /* ─── Cart Panel ─── */
   .cart-panel {
@@ -2349,4 +2434,23 @@
     }
     :global(.receipt-modal .receipt-body) { overflow: visible; }
   }
+
+  /* ─── Online platform form ─── */
+  .online-form { display: flex; flex-direction: column; gap: 8px; padding: 0 0 10px; }
+  .online-channels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .online-ch {
+    display: grid;
+    place-items: center;
+    height: var(--om-tap);
+    padding: 0 6px;
+    border: 2px solid var(--om-border);
+    border-radius: 10px;
+    background: var(--om-surface);
+    cursor: pointer;
+  }
+  .online-ch--active { border-color: var(--om-brand); background: var(--om-brand-tint); }
+  .online-ch img { max-width: 72px; max-height: 24px; width: auto; height: auto; }
+  .online-lbl { display: block; margin-bottom: 2px; font-size: 12px; font-weight: 500; color: var(--om-text-secondary); }
+  .online-warn { padding: 8px 10px; border-radius: 10px; background: var(--om-warning-tint); color: var(--om-warning); font-size: 12px; }
+  .online-tax { font-size: 12px; color: var(--om-text-secondary); }
 </style>

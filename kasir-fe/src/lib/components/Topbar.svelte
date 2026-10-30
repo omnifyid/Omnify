@@ -3,6 +3,7 @@
   import { language } from '$lib/i18n/language.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { session } from '$lib/stores/session.svelte';
+  import ShiftChip from './ShiftChip.svelte';
   import StoreSwitcher from './StoreSwitcher.svelte';
   import { navGroups, adminGroup } from './nav';
 
@@ -42,6 +43,8 @@
       <span class="h-2 w-2 rounded-full bg-[var(--om-brand-bright)]"></span>
       <span>{dateLabel}</span><span class="text-[var(--om-text-secondary)]">·</span><span>{timeLabel}</span>
     </div>
+
+    <ShiftChip />
 
     <div class="xl:hidden"><StoreSwitcher variant="chip" /></div>
 

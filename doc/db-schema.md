@@ -24,8 +24,14 @@ stores
 | `item_categories` | `name`, `icon` (emoji), `store_id` |
 | `items` | `name`, `price` (int, Rupiah), `cost_price` (HPP, nullable int, Rupiah; staff-only, omitted from the public menu), `is_available`, `stock`, `store_id`, `category_id` |
 | `discounts` | See [prd-discounts.md](prd-discounts.md) |
-| `orders` | `status`, `payment_method`, `subtotal`, `discount_amount`, `total`, `store_id` |
-| `order_items` | Snapshot of `name`, `unit_price`, `quantity`, `options_snapshot`, `addons_snapshot` |
+| `orders` | `status`, `payment_method` (`CASH`/`CARD`/`QRIS`/`TRANSFER`/`PLATFORM`), `channel` (nullable), `subtotal`, `discount_amount`, `total`, `kitchen_status` (nullable), `store_id` |
+| `stores.kitchen_enabled` | Opt-in kitchen management, see [prd-kitchen.md](prd-kitchen.md) |
+| `stores.service_bp`, `stores.pb1_bp`, `orders.service_amount`, `orders.pb1_amount` | Dine-in service charge and PB1 on direct orders, see [prd-orders.md](prd-orders.md) |
+| `ingredients`, `recipe_lines`, `stock_movements` | Ingredient stock, product recipes, stock log, see [prd-inventory.md](prd-inventory.md) |
+| `channel_settings`, `item_channel_prices` | Per store + channel: `enabled`, `commission_bp`, `markup_bp`, `payout_lag_days`; per item + channel manual `price`. `stores.tax_bp`; order channel columns, see [prd-channels.md](prd-channels.md) |
+| `expenses`, `platform_settlements` | Operating expenses; payouts received from online platforms (`orders.settlement_id`, `orders.expected_payout_date`), see [prd-finance.md](prd-finance.md) |
+| `order_refunds` | Append-only void/refund log per order (`type`, `method`, `amount`, `reason`, `refunded_at`); `orders.refunded_amount`, `order_items.void_qty`, see [prd-orders.md](prd-orders.md) |
+| `order_items` | `is_done` (kitchen checklist), `void_qty`. Snapshot of `name`, `unit_price`, `quantity`, `options_snapshot`, `addons_snapshot` |
 
 ## Model Conventions
 

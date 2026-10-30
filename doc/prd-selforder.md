@@ -55,7 +55,8 @@ All under prefix `/api/v1/public/` — no `Authorization` header required.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/public/stores/{store_id}/menu` | Returns store info, categories, and available items |
-| `POST` | `/public/stores/{store_id}/orders` | Creates a PENDING order; payment method fixed to `CASH` |
+| `POST` | `/public/stores/{store_id}/orders/preview` | Cart totals for the customer: automatic discounts, service charge (when a table is set), PB1; promo codes ignored |
+| `POST` | `/public/stores/{store_id}/orders` | Creates a PENDING order; payment method fixed to `CASH`; a table number makes it `DINE_IN` |
 
 Both endpoints verify `store.is_active = True` — returns 404 if not.
 
@@ -265,7 +266,7 @@ let isOrder = $derived(currentPath.startsWith('/order'));
 ## Limitations & Future Work
 
 - One cart configuration per item ID — cannot order the same item with two different option sets in one submission
-- No discount support on self-orders (always CASH; no promo code input)
+- No promo code input on self-orders (always CASH); automatic discounts still apply and show in the cart
 - No real-time push to customer after order status changes (customer sees static success screen)
 - QR codes generated client-side per session — not stored in DB; regenerate if stale
 - Table number is a free string; no server-side table list validation

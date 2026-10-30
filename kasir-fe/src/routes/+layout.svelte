@@ -18,6 +18,7 @@
     currentPath === '/reset-password'
   );
   let isPos = $derived(currentPath === '/pos');
+  let isOrders = $derived(currentPath === '/transactions');
   let isOrder = $derived(currentPath.startsWith('/order'));
 
   onMount(async () => {
@@ -48,13 +49,9 @@
 {#if isPublicAuth || isOrder}
   {@render children()}
 {:else if auth.ready && auth.isAuthenticated}
-  {#if isPos}
+  <AppShell flush={isPos || isOrders}>
     {@render children()}
-  {:else}
-    <AppShell>
-      {@render children()}
-    </AppShell>
-  {/if}
+  </AppShell>
 {:else}
   <div class="grid min-h-screen place-items-center bg-[var(--cream)] text-[var(--espresso)]">
     <div class="logo-font text-2xl">&gt;omnify</div>

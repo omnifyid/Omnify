@@ -34,3 +34,6 @@ class Item(Base, TimestampMixin):
     addon_groups: Mapped[list["AddonGroup"]] = relationship(
         back_populates="item", cascade="all, delete-orphan"
     )
+    channel_prices: Mapped[list["ItemChannelPrice"]] = relationship(
+        lazy="selectin", cascade="all, delete-orphan"
+    )

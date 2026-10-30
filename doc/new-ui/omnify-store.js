@@ -34,42 +34,49 @@ const OUTLETS = [
   { id: 'bsd', name: 'BSD', full: 'Kopi Senja · BSD', addr: 'Ruko Golden Boulevard Blok C-7, BSD City, Tangerang Selatan', phone: '021-5316-0287', npwpd: '36.74.0412.88', pb1: 10, svc: 0, svcOn: false, open: '08:00', close: '22:00', rcHead: 'KOPI SENJA BSD · Golden Boulevard C-7', rcFoot: 'Terima kasih! IG @kopisenja', active: true, device: 'Tablet Kasir 01' },
 ];
 const USERS = [
-  { id: 'u1', name: 'Rina', role: 'kasir', outlets: ['kmg'], pin: '1111', phone: '0812-3300-1182' },
-  { id: 'u2', name: 'Bayu', role: 'kasir', outlets: ['kmg'], pin: '2222', phone: '0813-2201-7744' },
-  { id: 'u5', name: 'Sinta', role: 'kasir', outlets: ['snp'], pin: '3333', phone: '0857-1123-6650' },
-  { id: 'u6', name: 'Yoga', role: 'kasirdapur', outlets: ['bsd'], pin: '4444', phone: '0821-7765-0091' },
-  { id: 'u3', name: 'Dewi', role: 'manajer', outlets: ['kmg', 'snp'], pin: '5555', phone: '0811-8890-2210', device: 'MacBook Dewi' },
-  { id: 'u4', name: 'Arif', role: 'owner', outlets: ['kmg', 'snp', 'bsd'], pin: '6666', phone: '0811-1200-4400', device: 'iPhone Arif' },
+  { id: 'u1', name: 'Rina', email: 'rina@kopisenja.id', pw: '0000', role: 'kasir', outlets: ['kmg'], pin: '1111', phone: '0812-3300-1182' },
+  { id: 'u2', name: 'Bayu', email: 'bayu@kopisenja.id', pw: '0000', role: 'kasir', outlets: ['kmg'], pin: '2222', phone: '0813-2201-7744' },
+  { id: 'u5', name: 'Sinta', email: 'sinta@kopisenja.id', pw: '0000', role: 'kasir', outlets: ['snp'], pin: '3333', phone: '0857-1123-6650' },
+  { id: 'u6', name: 'Yoga', email: 'yoga@kopisenja.id', pw: '0000', role: 'kasirdapur', outlets: ['bsd'], pin: '4444', phone: '0821-7765-0091' },
+  { id: 'u3', name: 'Dewi', email: 'dewi@kopisenja.id', pw: '0000', role: 'manajer', outlets: ['kmg', 'snp'], pin: '5555', phone: '0811-8890-2210', device: 'MacBook Dewi' },
+  { id: 'u4', name: 'Arif', email: 'arif@kopisenja.id', pw: '0000', role: 'owner', outlets: ['kmg', 'snp', 'bsd'], pin: '6666', phone: '0811-1200-4400', device: 'iPhone Arif' },
 ];
 const ROLES = {
-  owner: { label: 'Owner', desc: 'Semua akses, semua outlet' },
-  manajer: { label: 'Manajer outlet', desc: 'Semua untuk outletnya, menyetujui PIN' },
-  kasir: { label: 'Kasir', desc: 'Kasir, Pesanan, shift sendiri' },
-  kasirdapur: { label: 'Kasir + Dapur', desc: 'Kasir, Pesanan, shift sendiri, layar dapur, resep & ketersediaan' },
+  owner: { label: 'Owner', desc: 'Akses dan ubah semua outlet/cabang' },
+  manajer: { label: 'Manajer outlet', desc: 'Semua proses & back office untuk outlet yang ditugaskan, menyetujui PIN' },
+  kasir: { label: 'Kasir', desc: 'Operasional, inventaris, pembelian, keuangan, absensi, log aktivitas' },
+  kasirdapur: { label: 'Kasir + Dapur', desc: 'Seperti Kasir, plus resep & ketersediaan di dapur' },
   dapur: { label: 'Dapur', desc: 'Layar dapur, resep & ketersediaan' },
 };
+const RESV_FEE = 5000;
 const ALLR = ['owner', 'manajer'];
-const PAGE_ROLES = { dashboard: ALLR, pos: ['owner', 'manajer', 'kasir', 'kasirdapur'], orders: ['owner', 'manajer', 'kasir', 'kasirdapur'], selforder: ALLR, tables: ALLR, kitchen: ['owner', 'manajer', 'dapur', 'kasirdapur'], products: ALLR, discounts: ALLR, inventory: ALLR, purchasing: ALLR, finance: ALLR, staff: ALLR, audit: ALLR, reports: ALLR, settings: ALLR };
+const KSR = ['owner', 'manajer', 'kasir', 'kasirdapur'];
+const PAGE_ROLES = { dashboard: KSR, pos: KSR, orders: KSR, kitchen: ['owner', 'manajer', 'dapur', 'kasir', 'kasirdapur'], tables: KSR, selforder: KSR, products: ALLR, discounts: ALLR, inventory: KSR, purchasing: KSR, finance: KSR, staff: KSR, audit: KSR, reports: ['owner', 'manajer', 'kasir', 'kasirdapur', 'dapur'], settings: ALLR };
 const HOME = { owner: 'dashboard', manajer: 'dashboard', kasir: 'pos', kasirdapur: 'pos', dapur: 'kitchen' };
 const PERM_ROWS = [
-  { g: 'Halaman', label: 'Ringkasan', page: 'dashboard' }, { g: 'Halaman', label: 'Kasir', page: 'pos' }, { g: 'Halaman', label: 'Pesanan', page: 'orders' },
-  { g: 'Halaman', label: 'Self Order & Meja', page: 'tables' }, { g: 'Halaman', label: 'Dapur & Bar (KDS, resep)', page: 'kitchen' }, { g: 'Halaman', label: 'Produk & Diskon', page: 'products' },
-  { g: 'Halaman', label: 'Inventaris & Pembelian', page: 'inventory' }, { g: 'Halaman', label: 'Keuangan', page: 'finance' }, { g: 'Halaman', label: 'Karyawan, Log, Laporan', page: 'audit' }, { g: 'Halaman', label: 'Pengaturan', page: 'settings' },
-  { g: 'Aksi', label: 'Buka & tutup shift sendiri, kas masuk/keluar', roles: ['owner', 'manajer', 'kasir', 'kasirdapur'] },
-  { g: 'Aksi', label: 'Minta void, refund, diskon, ubah harga (butuh PIN)', roles: ['owner', 'manajer', 'kasir', 'kasirdapur'] },
+  { g: 'Operasional', label: 'Ringkasan', page: 'dashboard' }, { g: 'Operasional', label: 'Kasir', page: 'pos' }, { g: 'Operasional', label: 'Pesanan', page: 'orders' },
+  { g: 'Operasional', label: 'Dapur & Bar', page: 'kitchen' }, { g: 'Operasional', label: 'Meja & Self Order', page: 'tables' },
+  { g: 'Back office', label: 'Inventaris', page: 'inventory' }, { g: 'Back office', label: 'Pembelian', page: 'purchasing' }, { g: 'Back office', label: 'Keuangan', page: 'finance' },
+  { g: 'Back office', label: 'Karyawan (absensi)', page: 'staff' }, { g: 'Back office', label: 'Log aktivitas', page: 'audit' },
+  { g: 'Back office', label: 'Produk & Diskon', page: 'products' }, { g: 'Back office', label: 'Laporan', page: 'reports' }, { g: 'Back office', label: 'Pengaturan', page: 'settings' },
+  { g: 'Aksi', label: 'Buka & tutup shift sendiri, kas masuk/keluar', roles: KSR },
+  { g: 'Aksi', label: 'Open bill, terima pembayaran', roles: KSR },
+  { g: 'Aksi', label: 'Koreksi metode bayar / hapus item di shift sendiri (tanpa PIN)', roles: KSR },
+  { g: 'Aksi', label: 'Minta void, refund, diskon, ubah harga (butuh PIN)', roles: KSR },
   { g: 'Aksi', label: 'Menyetujui dengan PIN', roles: ALLR },
   { g: 'Aksi', label: 'Tinjau shift & selisih kas', roles: ALLR },
+  { g: 'Aksi', label: 'Rekap karyawan, pengguna & akses outlet', roles: ALLR },
   { g: 'Aksi', label: 'Ubah harga produk & resep', roles: ALLR },
-  { g: 'Aksi', label: 'Ubah data outlet sendiri', roles: ALLR },
+  { g: 'Aksi', label: 'Ubah data outlet yang ditugaskan', roles: ALLR },
   { g: 'Aksi', label: 'Ubah pengaturan bisnis (modul, kanal, kebijakan)', roles: ['owner'] },
-  { g: 'Aksi', label: 'Ubah peran & outlet pengguna', roles: ['owner'] },
-  { g: 'Aksi', label: 'Lihat semua outlet sekaligus', roles: ['owner'] },
+  { g: 'Aksi', label: 'Ubah peran pengguna', roles: ['owner'] },
+  { g: 'Aksi', label: 'Akses & ubah semua outlet/cabang', roles: ['owner'] },
   { g: 'Aksi', label: 'Ubah atau hapus log aktivitas', roles: [] },
 ];
 const CHANNELS = [
-  { id: 'gofood', label: 'GoFood', mark: 'GF', color: '#9E1B2F', tint: '#FBEFF1' },
-  { id: 'grabfood', label: 'GrabFood', mark: 'GR', color: '#14633A', tint: '#EAF5EE' },
-  { id: 'shopeefood', label: 'ShopeeFood', mark: 'SF', color: '#9A3412', tint: '#FCF0E8' },
+  { id: 'gofood', label: 'GoFood', mark: 'GF', logo: 'assets/pay/gojek.svg', color: '#9E1B2F', tint: '#FBEFF1' },
+  { id: 'grabfood', label: 'GrabFood', mark: 'GR', logo: 'assets/pay/grabapp.svg', color: '#14633A', tint: '#EAF5EE' },
+  { id: 'shopeefood', label: 'ShopeeFood', mark: 'SF', logo: 'assets/pay/Shopee.svg', color: '#9A3412', tint: '#FCF0E8' },
 ];
 const CHB = Object.fromEntries(CHANNELS.map(c => [c.id, c]));
 const isOnline = o => !!(o && o.channel && o.channel !== 'direct');
@@ -85,8 +92,8 @@ const DENOMS = [100000, 50000, 20000, 10000, 5000, 2000, 1000];
 const CASH_IN_CATS = ['Tambah uang kembalian', 'Dari kas kecil', 'Setoran pemilik', 'Lain-lain'];
 const CASH_OUT_NONEXP = ['Setor ke bank', 'Pindah ke kas kecil'];
 const REASONS = {
-  void: ['Salah input', 'Pelanggan berubah pikiran', 'Item habis', 'Kualitas tidak sesuai', 'Lain-lain'],
-  refund: ['Pesanan salah', 'Kualitas tidak sesuai', 'Terlalu lama', 'Kompensasi keluhan', 'Lain-lain'],
+  void: ['Salah input item', 'Salah metode pembayaran', 'Salah jumlah', 'Lain-lain'],
+  refund: ['Komplain · kualitas tidak sesuai', 'Komplain · pesanan salah', 'Komplain · terlalu lama', 'Komplain · lainnya'],
   cancel: ['Pelanggan membatalkan', 'Salah input', 'Item habis', 'Pembayaran ganda', 'Lain-lain'],
   disc: ['Kompensasi keluhan', 'Pelanggan tetap', 'Karyawan', 'Rekanan', 'Lain-lain'],
   price: ['Harga lama di menu', 'Porsi khusus', 'Kompensasi', 'Lain-lain'],
@@ -98,7 +105,7 @@ const REASONS = {
   settle: ['Penyesuaian komisi', 'Pesanan dibatalkan platform', 'Biaya promo merchant', 'Biaya iklan/layanan', 'Pembulatan', 'Lain-lain'],
 };
 const LOG_TYPES = {
-  void_item: ['Void item', 'remove_shopping_cart'], cancel_order: ['Batalkan pesanan dibayar', 'cancel'], refund: ['Refund', 'currency_exchange'],
+  void_item: ['Void item', 'remove_shopping_cart'], order_edit: ['Koreksi pesanan', 'edit_note'], cancel_order: ['Batalkan pesanan dibayar', 'cancel'], refund: ['Refund', 'currency_exchange'],
   discount_manual: ['Diskon manual', 'percent'], price_override: ['Ubah harga di kasir', 'edit'], reopen_bill: ['Buka ulang tagihan', 'restart_alt'],
   no_sale: ['Buka laci tanpa transaksi', 'point_of_sale'], stock_adjust: ['Penyesuaian stok', 'inventory'], shift_variance: ['Tutup shift dengan selisih', 'warning'],
   shift_open: ['Buka shift', 'lock_open'], shift_close: ['Tutup shift', 'lock'], shift_review: ['Tinjau shift', 'fact_check'],
@@ -164,7 +171,9 @@ function index(db) {
 }
 function shiftCalc(db, s) {
   const x = index(db)[s.id] || { cashSales: 0, cashRefunds: 0, cashIn: 0, cashOut: 0, nosale: 0, nOrders: 0, pay: {}, payRef: {}, ch: {}, chN: {}, refunds: [], moves: [] };
-  return { ...x, expected: s.openCash + x.cashSales - x.cashRefunds + x.cashIn - x.cashOut };
+  const rf = x.refunds || [], sm = (v, m) => rf.filter(r => (r.type === 'void') === v && r.method === m).reduce((a, r) => a + r.amount, 0);
+  const voidCash = sm(true, 'cash'), voidEdc = sm(true, 'edc'), refCash = sm(false, 'cash'), refEdc = sm(false, 'edc'), edcSales = x.pay.edc || 0;
+  return { ...x, voidCash, voidEdc, refCash, refEdc, edcSales, netCash: x.cashSales - voidCash - refCash, netEdc: edcSales - voidEdc - refEdc, expected: s.openCash + x.cashSales - x.cashRefunds + x.cashIn - x.cashOut };
 }
 const payStatus = (p, now) => { const rem = p.total - p.paid; if (rem <= 0) return 'lunas'; if (p.dueDate < sod(now)) return 'overdue'; return p.paid > 0 ? 'partial' : 'unpaid'; };
 const overdueDays = (p, now) => Math.max(0, Math.floor((sod(now) - p.dueDate) / D));
@@ -176,7 +185,7 @@ function aging(payables, now) {
 const receivable = o => isOnline(o) && o.status !== 'pcancel' && (o.expectedPayout || 0) > 0 && !o.settlementId;
 
 // ── persistensi ─────────────────────────────────────────────────────────────
-const DBK = ['v', 'seededAt', 'outlets', 'users', 'settings', 'prodCfg', 'stockBy', 'tablesBy', 'unavailableBy', 'orders', 'moves', 'pos', 'opnames', 'shifts', 'cashMoves', 'expenses', 'payables', 'payPayments', 'settlements', 'refunds', 'wastes', 'transfers', 'logs', 'nextNoBy', 'seq', 'discounts', 'payEnabled', 'selfOrderOn', 'soPrefix'];
+const DBK = ['v', 'seededAt', 'outlets', 'users', 'settings', 'prodCfg', 'stockBy', 'tablesBy', 'unavailableBy', 'orders', 'moves', 'pos', 'opnames', 'shifts', 'cashMoves', 'expenses', 'payables', 'payPayments', 'settlements', 'refunds', 'wastes', 'transfers', 'logs', 'nextNoBy', 'seq', 'discounts', 'payEnabled', 'selfOrderOn', 'soPrefix', 'menuCats', 'customMenu', 'deletedMenu', 'bom', 'customSup', 'customIng'];
 function load() { try { const raw = localStorage.getItem(KEY); if (!raw) return null; const db = JSON.parse(raw); return db && db.v === VER ? db : null; } catch (e) { return null; } }
 function save(st) { try { const o = {}; DBK.forEach(k => { o[k] = st[k]; }); localStorage.setItem(KEY, JSON.stringify(o)); return true; } catch (e) { return false; } }
 function loadSess() { try { return JSON.parse(localStorage.getItem(SKEY) || 'null'); } catch (e) { return null; } }
@@ -237,6 +246,7 @@ function seed(OM, now) {
     const method = on ? ch : (opt.method || wp(METH));
     const o = { id: 'O-' + oid + '-' + no, no, outletId: oid, channel: ch, source: on ? 'manual' : (opt.source || (type === 'dine' && R() < .15 ? 'qr' : 'kasir')), type, table: type === 'dine' ? (opt.table || 'T' + String(ri(1, 12)).padStart(2, '0')) : null, customer: opt.cust || (on || R() < .4 ? pk(NAMES) : 'Umum'), items, ...tot, discPct, discLabel, paid: on || opt.status === 'pending' ? 0 : tot.total, refunded: 0, method: opt.status === 'pending' ? 'none' : method, status: opt.status || 'served', createdAt: t, paidAt: on || opt.status === 'pending' ? null : t, userId: w ? w.user : null, shiftId: w && opt.status !== 'pending' ? w.id : null };
     if (opt.custNote) o.custNote = opt.custNote;
+    if (type === 'dine' && !on && o.source === 'kasir' && no % 9 === 0) o.resv = { ref: 'RSV-' + oid.toUpperCase().slice(0, 3) + '-' + String(no).padStart(4, '0'), source: 'Booking app', fee: RESV_FEE, name: o.customer === 'Umum' ? pk(NAMES) : o.customer, at: t - 2 * H };
     if (on) Object.assign(o, { channelOrderId: pid6(ch), driver: opt.driver || pk(DRIVERS), appNote: R() < .3 ? pk(['Sendok garpu ya', 'Es dipisah', 'Jangan pedas', 'Tolong dibungkus rapi']) : '', appTotal: tot.total, expectedPayoutDate: sod(t) + db.settings.channels[ch].lag * D, settlementId: null });
     return o;
   };
@@ -455,7 +465,7 @@ function seed(OM, now) {
 }
 function fmtR(n) { return (n < 0 ? '−' : '') + 'Rp ' + Math.round(Math.abs(n)).toLocaleString('id-ID'); }
 
-window.OS = { VER, D, H, MIN, sod, clone, r500, OUTLETS, USERS, ROLES, PAGE_ROLES, HOME, PERM_ROWS, CHANNELS, CHB, isOnline, EXP_CATS, FUNDS, FB, TERMS, DENOMS, CASH_IN_CATS, CASH_OUT_NONEXP, REASONS, LOG_TYPES,
+window.OS = { VER, D, H, MIN, sod, clone, r500, OUTLETS, USERS, ROLES, RESV_FEE, PAGE_ROLES, HOME, PERM_ROWS, CHANNELS, CHB, isOnline, EXP_CATS, FUNDS, FB, TERMS, DENOMS, CASH_IN_CATS, CASH_OUT_NONEXP, REASONS, LOG_TYPES,
   outletOf, carried, outletPrice, autoChPrice, chPrice, modAdd, modsStr, lineQty, calcTot, validSale, revenueOf, netOf, usage, costOf, index, shiftCalc, payStatus, overdueDays, aging, receivable,
   DBK, load, save, loadSess, saveSess, seed, fmtR };
 })();

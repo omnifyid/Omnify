@@ -7,13 +7,13 @@
   import { toAddonGroupsPayload, toItemUpdatePayload, toOptionGroupsPayload, type AddonGroupPayloadInput, type OptionGroupPayloadInput } from '$lib/api/catalog';
   import { api, mediaUrl } from '$lib/api/client';
   import { paginatedItems } from '$lib/api/pagination';
-  import type { Category, Item, PaginatedResponse } from '$lib/api/types';
+  import type { Category, ChannelSetting, Ingredient, Item, OrderChannel, PaginatedResponse, RecipeLine } from '$lib/api/types';
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { getItemPrice } from '$lib/utils/catalog';
   import { formatRupiah } from '$lib/utils/format';
   import { getChoiceLabel, getChoicePrice, getGroupChoices, getGroupLabel } from '$lib/utils/modifiers';
-  import { ChevronRight, ListChecks, PlusCircle, Search, SlidersHorizontal, Trash2, X } from 'lucide-svelte';
+  import { ChefHat, ChevronRight, ListChecks, PlusCircle, Search, SlidersHorizontal, Trash2, X } from 'lucide-svelte';
 
   let { tabs }: { tabs?: Snippet } = $props();
 
@@ -33,6 +33,30 @@
   let optionItem = $state<Item | null>(null);
   let optionGroups = $state<OptionGroupPayloadInput[]>([]);
   let savingOptions = $state(false);
+  // manual per-platform prices (edit modal)
+  const CHANNEL_NAMES: Record<OrderChannel, string> = { GOFOOD: 'GoFood', GRABFOOD: 'GrabFood', SHOPEEFOOD: 'ShopeeFood' };
+  let channelSettings = $state<ChannelSetting[]>([]);
+  let enabledChannels = $derived(channelSettings.filter((c) => c.enabled));
+  let gridCols = $derived(`1fr 120px ${enabledChannels.map(() => '110px ').join('')}120px 90px 150px 28px`);
+
+  /** Platform price shown in the list: manual if set, otherwise the automatic markup price. */
+  function channelPriceFor(item: Item, c: ChannelSetting) {
+    const manual = item.channel_prices?.[c.channel];
+    return { value: manual || autoChannelPrice(getItemPrice(item), c.markup_bp), manual: !!manual };
+  }
+
+  let editChannelPrices = $state<Partial<Record<OrderChannel, string>>>({});
+
+  /** Automatic platform price: price × (1 + markup), rounded up to Rp500 (mirrors the backend). */
+  function autoChannelPrice(price: number, markupBp: number) {
+    if (!markupBp || price <= 0) return price;
+    return Math.ceil((price * (10000 + markupBp)) / (10000 * 500)) * 500;
+  }
+
+  let recipeItem = $state<Item | null>(null);
+  let recipeLines = $state<{ ingredient_id: string; quantity: string }[]>([]);
+  let recipeIngredients = $state<Ingredient[]>([]);
+  let savingRecipe = $state(false);
   let editingItemId = $state<string | null>(null);
   let editProductName = $state('');
   let editCategoryId = $state('');
@@ -105,6 +129,7 @@
       items = paginatedItems(itemsRes);
       total = itemsRes.total;
       categoryId ||= categories[0]?.id ?? '';
+      channelSettings = await api.get<ChannelSetting[]>(`/stores/${storeId}/channels`).catch(() => []);
     } catch (err) {
       error = err instanceof Error ? err.message : language.t('error');
     } finally {
@@ -222,6 +247,7 @@
     editStock = item.stock !== null && item.stock !== undefined ? String(item.stock) : '';
     editPriceDisplay = formatPriceDisplay(getItemPrice(item));
     editCostDisplay = formatPriceDisplay(item.cost_price ?? 0);
+    editChannelPrices = Object.fromEntries(Object.entries(item.channel_prices ?? {}).map(([k, v]) => [k, formatPriceDisplay(v ?? 0)]));
     editImageFile = null;
     editModalOpen = true;
   }
@@ -234,6 +260,7 @@
     editStock = '';
     editPriceDisplay = '';
     editCostDisplay = '';
+    editChannelPrices = {};
     editImageFile = null;
   }
 
@@ -258,7 +285,16 @@
       const imageFile = editImageFile;
       await Promise.all([
         api.patch(`/stores/${storeId}/items/${editingItemId}`, { ...toItemUpdatePayload({ name: editProductName, categoryId: editCategoryId, basePrice: parsePrice(editPriceDisplay) }), cost_price: editCostDisplay ? parsePrice(editCostDisplay) : null }),
-        api.patch(`/stores/${storeId}/items/${editingItemId}/stock`, { stock })
+        api.patch(`/stores/${storeId}/items/${editingItemId}/stock`, { stock }),
+        // PUT replaces all platform prices, so start from the saved ones and apply the edited platforms
+        enabledChannels.length
+          ? api.put(`/stores/${storeId}/items/${editingItemId}/channel-prices`, {
+              prices: {
+                ...(editingItem?.channel_prices ?? {}),
+                ...Object.fromEntries(enabledChannels.map((c) => [c.channel, parsePrice(editChannelPrices[c.channel] ?? '') || null]))
+              }
+            })
+          : Promise.resolve()
       ]);
       if (imageFile) {
         uploadingImage = true;
@@ -299,6 +335,60 @@
       }))
     }));
     if (addonGroups.length === 0) addAddonGroup();
+  }
+
+  async function openRecipeEditorFromEdit() {
+    const item = editingItem;
+    const storeId = session.selectedStore?.id;
+    if (!item || !storeId) return;
+    closeEditModal();
+    error = '';
+    try {
+      const [ings, lines] = await Promise.all([
+        api.get<PaginatedResponse<Ingredient>>(`/stores/${storeId}/ingredients?limit=500&offset=0`),
+        api.get<RecipeLine[]>(`/stores/${storeId}/items/${item.id}/recipe`)
+      ]);
+      recipeIngredients = paginatedItems(ings);
+      recipeLines = lines.map((l) => ({ ingredient_id: l.ingredient_id, quantity: String(l.quantity) }));
+      recipeItem = item;
+    } catch (err) {
+      error = err instanceof Error ? err.message : language.t('error');
+    }
+  }
+
+  function closeRecipeEditor() {
+    recipeItem = null;
+    recipeLines = [];
+  }
+
+  function recipeUnit(id: string) {
+    return recipeIngredients.find((i) => i.id === id)?.unit ?? '';
+  }
+
+  let recipeCost = $derived(
+    recipeLines.reduce((sum, l) => {
+      const ing = recipeIngredients.find((i) => i.id === l.ingredient_id);
+      const q = parseFloat(l.quantity.replace(',', '.'));
+      return sum + (ing && q > 0 ? ing.cost_price * q : 0);
+    }, 0)
+  );
+
+  async function saveRecipe() {
+    const storeId = session.selectedStore?.id;
+    if (!storeId || !recipeItem) return;
+    savingRecipe = true;
+    error = '';
+    try {
+      const lines = recipeLines
+        .map((l) => ({ ingredient_id: l.ingredient_id, quantity: parseFloat(l.quantity.replace(',', '.')) }))
+        .filter((l) => l.ingredient_id && l.quantity > 0);
+      await api.put(`/stores/${storeId}/items/${recipeItem.id}/recipe`, { lines });
+      closeRecipeEditor();
+    } catch (err) {
+      error = err instanceof Error ? err.message : language.t('error');
+    } finally {
+      savingRecipe = false;
+    }
   }
 
   function closeOptionEditor() {
@@ -444,14 +534,14 @@
 {/if}
 
 <section class="card overflow-hidden">
-  <div class="hidden grid-cols-[1fr_120px_120px_90px_150px_28px] gap-3.5 border-b border-[var(--om-border)] bg-[var(--om-surface-sunk)] px-[18px] py-3 text-[12px] text-[var(--om-text-secondary)] lg:grid">
-    <span>{language.t('products')}</span><span class="text-right">{language.t('price')}</span><span class="text-right">HPP</span><span class="text-right">Margin</span><span>{language.t('status')}</span><span></span>
+  <div class="hidden gap-3.5 border-b border-[var(--om-border)] bg-[var(--om-surface-sunk)] px-[18px] py-3 text-[12px] text-[var(--om-text-secondary)] lg:grid" style="grid-template-columns: {gridCols}">
+    <span>{language.t('products')}</span><span class="text-right">{language.t('price')}</span>{#each enabledChannels as c (c.channel)}<span class="text-right">{CHANNEL_NAMES[c.channel]}</span>{/each}<span class="text-right">HPP</span><span class="text-right">Margin</span><span>{language.t('status')}</span><span></span>
   </div>
 
   {#each items as item}
     <div
-      class="group flex cursor-pointer items-center gap-3 border-b border-[var(--om-divider)] px-[18px] py-3 transition-colors last:border-0 hover:bg-[var(--om-bg)] lg:grid lg:grid-cols-[1fr_120px_120px_90px_150px_28px] lg:gap-3.5"
-      style="min-height: var(--om-tap)"
+      class="group flex cursor-pointer items-center gap-3 border-b border-[var(--om-divider)] px-[18px] py-3 transition-colors last:border-0 hover:bg-[var(--om-bg)] lg:grid lg:gap-3.5 lg:[grid-template-columns:var(--cols)]"
+      style="min-height: var(--om-tap); --cols: {gridCols}"
       role="button"
       tabindex="0"
       onclick={() => openEditModal(item)}
@@ -477,10 +567,19 @@
           <div class="mt-0.5 text-[12px] tabular-nums text-[var(--om-text-secondary)] lg:hidden">
             {formatRupiah(getItemPrice(item))}{#if item.cost_price != null} · HPP {formatRupiah(item.cost_price)}{/if}
           </div>
+          {#if enabledChannels.length}
+            <div class="mt-0.5 flex flex-wrap gap-x-3 text-[12px] tabular-nums text-[var(--om-text-secondary)] lg:hidden">
+              {#each enabledChannels as c (c.channel)}<span>{CHANNEL_NAMES[c.channel]} {formatRupiah(channelPriceFor(item, c).value)}</span>{/each}
+            </div>
+          {/if}
         </div>
       </div>
 
       <div class="hidden text-right text-[16px] font-semibold lg:block">{formatRupiah(getItemPrice(item))}</div>
+      {#each enabledChannels as c (c.channel)}
+        {@const cp = channelPriceFor(item, c)}
+        <div class="hidden text-right text-[14px] tabular-nums lg:block {cp.manual ? 'font-semibold' : 'text-[var(--om-text-secondary)]'}" title={cp.manual ? language.t('channelPriceManual') : language.t('channelPriceAuto')}>{formatRupiah(cp.value)}</div>
+      {/each}
       <div class="hidden text-right text-[14px] lg:block">{item.cost_price != null ? formatRupiah(item.cost_price) : '—'}</div>
       <div class="hidden text-right text-[14px] font-semibold lg:block {marginTone(item)}">{marginLabel(item)}</div>
 
@@ -598,6 +697,33 @@
           </label>
         </div>
 
+        <!-- Platform prices -->
+        {#if enabledChannels.length}
+          <div>
+            <p class="mb-2 text-[12px] font-medium normal-case tracking-normal text-[var(--om-ink-2)]">{language.t('channelPrices')}</p>
+            <p class="mb-2 text-xs text-[var(--text-muted)]">{language.t('channelPricesHint')}</p>
+            <div class="space-y-2">
+              {#each enabledChannels as c (c.channel)}
+                {@const auto = autoChannelPrice(parsePrice(editPriceDisplay), c.markup_bp)}
+                <div class="grid grid-cols-[1fr_9rem] items-center gap-3">
+                  <div class="min-w-0">
+                    <div class="text-sm font-semibold text-[var(--espresso)]">{CHANNEL_NAMES[c.channel]}</div>
+                    <div class="text-xs text-[var(--text-muted)]">{language.t('channelPriceAuto')} {c.markup_bp ? `+${c.markup_bp / 100}%` : ''} · {formatRupiah(auto)}</div>
+                  </div>
+                  <input
+                    class="field text-right"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder={formatPriceDisplay(auto)}
+                    value={editChannelPrices[c.channel] ?? ''}
+                    oninput={(e) => { editChannelPrices[c.channel] = onPriceInput(e); }}
+                  />
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
         <!-- Modifier editors -->
         <div>
           <p class="mb-2 text-[12px] font-medium normal-case tracking-normal text-[var(--om-ink-2)]">{language.t('options')} / {language.t('addons')}</p>
@@ -630,6 +756,20 @@
                 <div class="truncate text-xs text-[var(--text-muted)]">
                   {editingItem && addonSummaryFor(editingItem) ? addonSummaryFor(editingItem) : 'Extra shots, toppings...'}
                 </div>
+              </div>
+              <ChevronRight class="h-4 w-4 shrink-0 text-[var(--text-muted)]" />
+            </button>
+            <div class="mx-4 h-px bg-[var(--border)]"></div>
+            <button
+              class="flex w-full items-center gap-3 bg-[var(--white)] px-4 py-3.5 text-left transition-colors hover:bg-[var(--cream)]"
+              onclick={openRecipeEditorFromEdit}
+            >
+              <div class="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-green-100 text-green-700">
+                <ChefHat class="h-4 w-4" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-bold text-[var(--espresso)]">{language.t('invRecipe')}</div>
+                <div class="truncate text-xs text-[var(--text-muted)]">{language.t('invRecipeHint')}</div>
               </div>
               <ChevronRight class="h-4 w-4 shrink-0 text-[var(--text-muted)]" />
             </button>
@@ -678,6 +818,50 @@
           disabled={deleting}
           onclick={confirmDelete}
         >{deleting ? language.t('deleting') : language.t('delete')}</button>
+      </div>
+    </section>
+  </div>
+{/if}
+
+<!-- ─── Recipe editor modal ───────────────────────────────────────── -->
+{#if recipeItem}
+  <div class="fixed inset-0 z-50 flex items-end justify-center bg-[var(--om-scrim)] md:items-center">
+    <section class="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-t-3xl bg-[var(--white)] md:rounded-3xl" role="dialog" aria-modal="true" tabindex="-1">
+      <div class="flex items-center gap-3 border-b border-[var(--border)] px-4 py-3">
+        <div class="min-w-0 flex-1">
+          <h2 class="display-font truncate text-xl font-bold text-[var(--espresso)]">{language.t('invRecipe')} - {recipeItem.name}</h2>
+          <p class="text-xs text-[var(--text-muted)]">{language.t('invRecipeHint')}</p>
+        </div>
+        <button class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)]" onclick={closeRecipeEditor} aria-label={language.t('close')}><X class="h-4 w-4" /></button>
+      </div>
+      <div class="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
+        {#if recipeIngredients.length === 0}
+          <p class="text-sm text-[var(--text-muted)]">{language.t('invRecipeNoIngredients')}</p>
+        {:else}
+          {#if recipeLines.length === 0}
+            <p class="text-sm text-[var(--text-muted)]">{language.t('invRecipeNone')}</p>
+          {/if}
+          {#each recipeLines as line, index}
+            <div class="flex items-center gap-1.5">
+              <select class="field min-w-0 flex-1 py-2 text-sm" bind:value={line.ingredient_id}>
+                <option value="">{language.t('invRecipePick')}</option>
+                {#each recipeIngredients as ing}
+                  <option value={ing.id} disabled={ing.id !== line.ingredient_id && recipeLines.some((l) => l.ingredient_id === ing.id)}>{ing.name} ({ing.unit})</option>
+                {/each}
+              </select>
+              <div class="field flex w-[7.5rem] shrink-0 items-center gap-1 py-2">
+                <input class="min-w-0 flex-1 bg-transparent text-right text-sm outline-none" inputmode="decimal" placeholder="0" aria-label={language.t('invRecipeQty')} bind:value={line.quantity} />
+                <span class="text-xs text-[var(--text-muted)]">{recipeUnit(line.ingredient_id)}</span>
+              </div>
+              <button class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-500" onclick={() => (recipeLines = recipeLines.filter((_, i) => i !== index))}><X class="h-3.5 w-3.5" /></button>
+            </div>
+          {/each}
+          <button class="text-xs font-bold text-[var(--warm-brown)]" onclick={() => recipeLines.push({ ingredient_id: '', quantity: '' })}>+ {language.t('invRecipeAdd')}</button>
+        {/if}
+      </div>
+      <div class="flex items-center gap-3 border-t border-[var(--border)] p-4">
+        <div class="flex-1 text-sm text-[var(--text-muted)]">{language.t('invRecipeCost')}: <strong class="text-[var(--espresso)]">{formatRupiah(Math.round(recipeCost))}</strong></div>
+        <button class="btn-primary px-4 py-2 text-sm" disabled={savingRecipe} onclick={saveRecipe}>{savingRecipe ? language.t('saving') : language.t('saveChanges')}</button>
       </div>
     </section>
   </div>

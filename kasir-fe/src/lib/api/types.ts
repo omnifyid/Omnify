@@ -1,5 +1,7 @@
 export type Role = 'OWNER' | 'MANAGER' | 'OPERATOR';
-export type PaymentMethod = 'CASH' | 'CARD' | 'QRIS' | 'TRANSFER';
+export type PaymentMethod = 'CASH' | 'CARD' | 'QRIS' | 'TRANSFER' | 'PLATFORM';
+export type OrderChannel = 'GOFOOD' | 'GRABFOOD' | 'SHOPEEFOOD';
+export type KitchenStatus = 'NEW' | 'COOKING' | 'READY' | 'SERVED';
 export type OrderStatus = 'PENDING' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED';
 export type DiscountType = 'PERCENTAGE' | 'FIXED';
 export type DiscountScope = 'ORDER' | 'ITEM';
@@ -36,6 +38,12 @@ export type Store = {
   pos_table_enabled?: boolean;
   pos_table_count?: number;
   pos_customer_name_enabled?: boolean;
+  kitchen_enabled?: boolean;
+  tax_bp?: number;
+  service_bp?: number;
+  pb1_bp?: number;
+  shift_variance_threshold?: number;
+  default_float?: number;
 };
 
 export type AdminStore = {
@@ -108,6 +116,8 @@ export type Item = {
   base_price?: number;
   /** HPP (cost of goods), Rupiah. */
   cost_price?: number | null;
+  /** manual platform prices (staff only), e.g. { GOFOOD: 25000 } */
+  channel_prices?: Partial<Record<OrderChannel, number>>;
   is_available?: boolean;
   image_url?: string | null;
   icon?: string | null;
@@ -120,6 +130,7 @@ export type Item = {
 export type Order = {
   id: string;
   order_number?: string;
+  operator_id?: string | null;
   status: OrderStatus;
   payment_method: PaymentMethod;
   subtotal?: number;
@@ -130,6 +141,20 @@ export type Order = {
   order_type?: 'DINE_IN' | 'TAKE_AWAY' | null;
   table_number?: string | null;
   customer_name?: string | null;
+  kitchen_status?: KitchenStatus | null;
+  channel?: OrderChannel | null;
+  channel_order_id?: string | null;
+  app_total?: number | null;
+  commission_amount?: number | null;
+  expected_payout?: number | null;
+  tax_amount?: number | null;
+  expected_payout_date?: string | null;
+  settlement_id?: string | null;
+  driver_name?: string | null;
+  service_amount?: number;
+  pb1_amount?: number;
+  refunded_amount?: number;
+  refunds?: OrderRefund[];
   created_at?: string;
   staff_name?: string | null;
   items?: Array<{
@@ -144,7 +169,20 @@ export type Order = {
     item_discount_amount?: number | null;
     options_snapshot?: unknown[] | null;
     addons_snapshot?: unknown[] | null;
+    is_done?: boolean;
+    void_qty?: number;
   }>;
+};
+
+export type OrderRefund = {
+  id: string;
+  type: 'VOID' | 'REFUND';
+  method: 'CASH' | 'TRANSFER';
+  amount: number;
+  reason: string;
+  quantity: number | null;
+  order_item_id: string | null;
+  refunded_at: string;
 };
 
 export type Discount = {
@@ -201,4 +239,173 @@ export type DashboardReport = {
   sales: SalesReport;
   top_items: TopItemReport[];
   payments: PaymentReport[];
+};
+
+export type Ingredient = {
+  id: string;
+  name: string;
+  unit: string;
+  category: string | null;
+  stock: number;
+  min_stock: number;
+  cost_price: number;
+};
+
+export type MovementType = 'INITIAL' | 'RESTOCK' | 'SALE' | 'RETURN' | 'OPNAME';
+
+export type StockMovement = {
+  id: string;
+  ingredient_id: string;
+  ingredient_name: string;
+  unit: string;
+  type: MovementType;
+  quantity: number;
+  balance_after: number;
+  note: string | null;
+  order_id: string | null;
+  created_at: string;
+};
+
+export type RecipeLine = {
+  ingredient_id: string;
+  ingredient_name: string;
+  unit: string;
+  quantity: number;
+  cost_price: number;
+};
+
+export type ChannelSetting = {
+  channel: OrderChannel;
+  enabled: boolean;
+  commission_bp: number;
+  markup_bp: number;
+  payout_lag_days: number;
+};
+
+export type ExpenseSource = 'BANK' | 'EWALLET' | 'PETTY' | 'DRAWER';
+
+export type Expense = {
+  id: string;
+  date: string;
+  category: string;
+  description: string;
+  amount: number;
+  source: ExpenseSource;
+  recurring: boolean;
+  status: 'DRAFT' | 'POSTED';
+};
+
+export type ExpenseSummary = {
+  total: number;
+  posted_count: number;
+  draft_count: number;
+  by_category: { category: string; total: number }[];
+};
+
+export type ChannelOverview = {
+  channel: OrderChannel;
+  outstanding: number;
+  outstanding_count: number;
+  overdue: number;
+  received_month: number;
+  commission_month: number;
+};
+
+export type Receivable = {
+  id: string;
+  order_number: string;
+  channel_order_id: string | null;
+  created_at: string;
+  total_amount: number;
+  expected_payout: number;
+  expected_payout_date: string;
+};
+
+export type PlatformSettlement = {
+  id: string;
+  channel: OrderChannel;
+  received_date: string;
+  amount: number;
+  expected: number;
+  diff: number;
+  order_count: number;
+  reason: string | null;
+};
+
+export type ShiftStatus = 'OPEN' | 'CLOSED' | 'REVIEWED';
+
+export type Shift = {
+  id: string;
+  status: ShiftStatus;
+  opened_by_name: string | null;
+  opened_at: string;
+  opening_cash: number;
+  carry_expected: number | null;
+  closed_by_name: string | null;
+  closed_at: string | null;
+  counted_cash: number | null;
+  expected_cash: number | null;
+  variance: number | null;
+  note: string | null;
+  review_note: string | null;
+};
+
+export type CashMovement = {
+  id: string;
+  type: 'IN' | 'OUT';
+  amount: number;
+  category: string;
+  reason: string;
+  created_at: string;
+  user_name: string | null;
+};
+
+export type ShiftDetail = Shift & {
+  cash_sales: number;
+  cash_refunds: number;
+  cash_in: number;
+  cash_out: number;
+  non_cash: { method: string; total: number; count: number }[];
+  movements: CashMovement[];
+};
+
+export type ShiftCurrent = {
+  shift: Shift | null;
+  cash_sales: number;
+  cash_refunds: number;
+  cash_in: number;
+  cash_out: number;
+  last_counted_cash: number | null;
+  last_closed_at: string | null;
+  cash_on_hand: number | null;
+  default_float: number;
+  variance_threshold: number;
+};
+
+export type ShiftSummary = {
+  count: number;
+  open_count: number;
+  review_count: number;
+  big_count: number;
+  total_variance: number;
+};
+
+export type IngredientSummary = {
+  count: number;
+  low_count: number;
+  stock_value: number;
+  categories: string[];
+};
+
+export type SettlementBatch = {
+  date: string;
+  order_count: number;
+  gross: number;
+  expected: number;
+};
+
+export type ReceivableSelection = {
+  ids: string[];
+  count: number;
+  expected: number;
 };

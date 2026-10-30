@@ -23,10 +23,34 @@ describe('toOrderPayload', () => {
         {
           item_id: 'item-1',
           quantity: 2,
-          option_choice_ids: ['less-sugar'],
-          addon_choice_ids: ['extra-shot']
+          selected_option_choice_ids: ['less-sugar'],
+          selected_addon_choice_ids: ['extra-shot']
         }
-      ]
+      ],
+      order_type: null,
+      table_number: null,
+      customer_name: null,
+      notes: null,
+      channel: null,
+      channel_order_id: null,
+      app_total: null,
+      driver_name: null
     });
+  });
+
+  it('drops payment method and discount for online orders and keeps the driver', () => {
+    const payload = toOrderPayload({
+      paymentMethod: 'CASH',
+      discountCode: 'X',
+      channel: 'GOFOOD',
+      channelOrderId: ' F-1 ',
+      driverName: ' Budi ',
+      items: [{ itemId: 'item-1', quantity: 1 }]
+    });
+
+    expect(payload.payment_method).toBeUndefined();
+    expect(payload.discount_code).toBeUndefined();
+    expect(payload.channel_order_id).toBe('F-1');
+    expect(payload.driver_name).toBe('Budi');
   });
 });

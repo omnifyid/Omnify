@@ -5,7 +5,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import NotFoundError
-from app.models import AddonChoice, AddonGroup, Item, ItemCategory, OptionChoice, OptionGroup
+from app.models import (
+    AddonChoice,
+    AddonGroup,
+    Item,
+    ItemCategory,
+    ItemChannelPrice,
+    OptionChoice,
+    OptionGroup,
+    OrderChannel,
+)
+from app.core.exceptions import BadRequestError
 from app.schemas.item import AddonGroupCreate, ItemCreate, ItemUpdate, OptionGroupCreate
 
 
@@ -131,6 +141,26 @@ async def delete_item(item_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession)
     item = await _load_item(item_id, store_id, db)
     item.is_available = False
     await db.commit()
+
+
+async def replace_channel_prices(
+    item_id: uuid.UUID, store_id: uuid.UUID, prices: dict[str, int | None], db: AsyncSession
+) -> Item:
+    item = await _load_item(item_id, store_id, db)
+    valid = {c.value for c in OrderChannel}
+    unknown = set(prices) - valid
+    if unknown:
+        raise BadRequestError(f"Unknown channel: {', '.join(sorted(unknown))}")
+    if any(p is not None and p < 0 for p in prices.values()):
+        raise BadRequestError("Price must be >= 0")
+    await db.execute(delete(ItemChannelPrice).where(ItemChannelPrice.item_id == item_id))
+    await db.flush()
+    for ch, price in prices.items():
+        if price:
+            db.add(ItemChannelPrice(item_id=item_id, channel=ch, price=price))
+    await db.commit()
+    await db.refresh(item, ["channel_prices"])
+    return item
 
 
 async def replace_option_groups(

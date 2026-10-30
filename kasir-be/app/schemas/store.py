@@ -21,6 +21,12 @@ class StoreUpdate(BaseModel):
     pos_table_enabled: bool | None = None
     pos_table_count: int | None = None
     pos_customer_name_enabled: bool | None = None
+    kitchen_enabled: bool | None = None
+    tax_bp: int | None = Field(default=None, ge=0, le=10000)
+    service_bp: int | None = Field(default=None, ge=0, le=10000)
+    pb1_bp: int | None = Field(default=None, ge=0, le=10000)
+    shift_variance_threshold: int | None = Field(default=None, ge=0)
+    default_float: int | None = Field(default=None, ge=0)
 
 
 class StoreRead(BaseModel):
@@ -39,6 +45,12 @@ class StoreRead(BaseModel):
     pos_table_enabled: bool = False
     pos_table_count: int = 10
     pos_customer_name_enabled: bool = False
+    kitchen_enabled: bool = False
+    tax_bp: int = 0
+    service_bp: int = 0
+    pb1_bp: int = 0
+    shift_variance_threshold: int = 20000
+    default_float: int = 0
     role: StoreRole | None = None
 
     model_config = {"from_attributes": True}

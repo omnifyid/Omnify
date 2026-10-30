@@ -241,6 +241,23 @@ async def list_categories(
     return list(result.scalars().all()), total
 
 
+async def attach_category_stats(store_id: uuid.UUID, categories: list[ItemCategory], db: AsyncSession) -> None:
+    """Sets item_count on each category (one grouped query)."""
+    if not categories:
+        return
+    rows = (
+        await db.execute(
+            select(Item.category_id, func.count())
+            .where(Item.store_id == store_id, Item.category_id.in_([c.id for c in categories]))
+            .group_by(Item.category_id)
+        )
+    ).all()
+    stats = {r[0]: r for r in rows}
+    for c in categories:
+        r = stats.get(c.id)
+        c.item_count = r[1] if r else 0
+
+
 async def create_category(
     store_id: uuid.UUID, name: str, sort_order: int, db: AsyncSession, icon: str | None = None
 ) -> ItemCategory:

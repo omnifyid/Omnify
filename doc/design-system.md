@@ -490,3 +490,13 @@ Display below the search bar (or page header). Each chip has an 'x' to remove it
 - Chips appear only if filters are active (non-empty)
 - Clicking the 'x' removes one filter and refetches
 - Clicking "Reset" in the modal clears all filters
+
+---
+
+## Segments & Filter Chips
+
+Use the shared helpers in `$lib/utils/ui` (`SEG_GROUP`, `CHIP_ROW`, `seg()`, `chip()`), never a local copy.
+
+- **Segment** (periods, tabs, view toggle): grey `#EDECE7` group with 4px padding; items are `--om-tap` high, radius 8. The active item has the brand tint background and an inset 2px brand outline.
+- **Chip** (status, channel, category, reason): pill, `--om-tap` high on filter rows (40px inside modals), 1px `--om-border` border and white background; the active chip has the brand tint background and a brand border. Filter chips show no counts.
+- Chip rows scroll horizontally on mobile and wrap from `md` up.

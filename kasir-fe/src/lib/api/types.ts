@@ -72,6 +72,8 @@ export type Category = {
   name: string;
   icon?: string | null;
   sort_order?: number;
+  // product summary from the list endpoint
+  item_count?: number;
 };
 
 export type OptionGroup = {
@@ -196,6 +198,8 @@ export type Discount = {
   target_type?: DiscountTargetType | null;
   target_item_id?: string | null;
   target_category_id?: string | null;
+  target_item_name?: string | null;
+  target_category_name?: string | null;
   is_automatic: boolean;
   min_order_amount?: number | null;
   max_uses?: number | null;

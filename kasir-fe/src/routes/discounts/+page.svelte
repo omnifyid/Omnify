@@ -3,7 +3,8 @@
   import { untrack } from 'svelte';
   import { api } from '$lib/api/client';
   import { paginatedItems } from '$lib/api/pagination';
-  import type { Category, Discount, DiscountScope, DiscountTargetType, DiscountType, Item, PaginatedResponse } from '$lib/api/types';
+  import type { Category, Discount, DiscountScope, DiscountTargetType, DiscountType, PaginatedResponse } from '$lib/api/types';
+  import ItemPicker from '$lib/components/ItemPicker.svelte';
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
@@ -11,7 +12,6 @@
 
   let discounts = $state<Discount[]>([]);
   let categories = $state<Category[]>([]);
-  let items = $state<Item[]>([]);
   let loading = $state(false);
   let error = $state('');
   let page = $state(1);
@@ -30,6 +30,7 @@
   let createScope = $state<DiscountScope>('ORDER');
   let createTargetType = $state<DiscountTargetType>('ALL');
   let createTargetItemId = $state('');
+  let createTargetItemName = $state('');
   let createTargetCategoryId = $state('');
   let createIsAutomatic = $state(false);
   let createMinOrderAmount = $state('');
@@ -48,6 +49,7 @@
   let editScope = $state<DiscountScope>('ORDER');
   let editTargetType = $state<DiscountTargetType>('ALL');
   let editTargetItemId = $state('');
+  let editTargetItemName = $state('');
   let editTargetCategoryId = $state('');
   let editIsAutomatic = $state(false);
   let editMinOrderAmount = $state('');
@@ -103,15 +105,13 @@
     loading = true;
     error = '';
     try {
-      const [discRes, catsRes, itemsRes] = await Promise.all([
+      const [discRes, catsRes] = await Promise.all([
         api.get<PaginatedResponse<Discount>>(`/stores/${storeId}/discounts?limit=${limit}&offset=${(page - 1) * limit}`),
-        api.get<PaginatedResponse<Category>>(`/stores/${storeId}/categories?limit=100`),
-        api.get<PaginatedResponse<Item>>(`/stores/${storeId}/items?limit=500`)
+        api.get<PaginatedResponse<Category>>(`/stores/${storeId}/categories?limit=100`)
       ]);
       discounts = paginatedItems(discRes);
       total = discRes.total;
       categories = paginatedItems(catsRes);
-      items = paginatedItems(itemsRes);
     } catch (err) {
       error = err instanceof Error ? err.message : language.t('error');
     } finally {
@@ -122,7 +122,7 @@
   function openCreate() {
     createName = ''; createCode = ''; createType = 'PERCENTAGE'; createValue = 0;
     createMaxAmount = ''; createScope = 'ORDER'; createTargetType = 'ALL';
-    createTargetItemId = ''; createTargetCategoryId = ''; createIsAutomatic = false;
+    createTargetItemId = ''; createTargetItemName = ''; createTargetCategoryId = ''; createIsAutomatic = false;
     createMinOrderAmount = ''; createMaxUses = ''; createExpiresAt = ''; createIsActive = true;
     creatingOpen = true;
   }
@@ -161,6 +161,7 @@
     editScope = d.scope;
     editTargetType = d.target_type ?? 'ALL';
     editTargetItemId = d.target_item_id ?? '';
+    editTargetItemName = d.target_item_name ?? '';
     editTargetCategoryId = d.target_category_id ?? '';
     editIsAutomatic = d.is_automatic;
     editMinOrderAmount = d.min_order_amount != null ? String(d.min_order_amount) : '';
@@ -293,9 +294,9 @@
         {#if d.scope === 'ITEM' && d.target_type && d.target_type !== 'ALL'}
           <div class="mt-0.5 text-xs text-[var(--text-muted)]">
             {#if d.target_type === 'CATEGORY' && d.target_category_id}
-              {categories.find(c => c.id === d.target_category_id)?.name ?? '—'}
+              {d.target_category_name ?? '—'}
             {:else if d.target_type === 'ITEM' && d.target_item_id}
-              {items.find(i => i.id === d.target_item_id)?.name ?? '—'}
+              {d.target_item_name ?? '—'}
             {:else}
               {language.t('all')} {language.t('items')}
             {/if}
@@ -417,10 +418,7 @@
         {#if createShowItemPicker}
           <div class="mt-3">
             <label for="create-discount-item" class="mb-1 block text-xs font-semibold text-[var(--text-muted)]">{language.t('item')}</label>
-            <select id="create-discount-item" class="field" bind:value={createTargetItemId}>
-              <option value="">{language.t('selectItem')}</option>
-              {#each items as item}<option value={item.id}>{item.name}</option>{/each}
-            </select>
+            <ItemPicker id="create-discount-item" bind:value={createTargetItemId} bind:name={createTargetItemName} />
           </div>
         {/if}
 
@@ -544,10 +542,7 @@
         {#if editShowItemPicker}
           <div class="mt-3">
             <label for="edit-discount-item" class="mb-1 block text-xs font-semibold text-[var(--text-muted)]">{language.t('item')}</label>
-            <select id="edit-discount-item" class="field" bind:value={editTargetItemId}>
-              <option value="">{language.t('selectItem')}</option>
-              {#each items as item}<option value={item.id}>{item.name}</option>{/each}
-            </select>
+            <ItemPicker id="edit-discount-item" bind:value={editTargetItemId} bind:name={editTargetItemName} />
           </div>
         {/if}
 

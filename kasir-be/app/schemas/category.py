@@ -21,5 +21,7 @@ class CategoryRead(BaseModel):
     name: str
     icon: str | None
     sort_order: int
+    # summary of the category's products, filled by the list endpoint
+    item_count: int = 0
 
     model_config = {"from_attributes": True}

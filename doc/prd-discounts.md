@@ -68,7 +68,8 @@ When `scope = ITEM`, a `target_type` must be set:
 
 ## UI
 
-- List page: table with Name/Code, Value, Scope·Target, Auto badge, Active status, Edit/Delete
+- List page: table with Name/Code, Value, Scope·Target, Auto badge, Active status, Edit/Delete. The list endpoint returns `target_item_name` and `target_category_name`, so the page never loads the product list.
+- Item targets are chosen with `ItemPicker` (search-as-you-type against `GET /items?search=`, 8 results).
 - Create & Edit: modal (bottom sheet on mobile, centered on desktop)
 - Page header has "Add Discount" button that opens create modal
 

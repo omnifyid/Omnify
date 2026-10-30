@@ -7,6 +7,7 @@
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
+  import { seg, SEG_GROUP } from '$lib/utils/ui';
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
   import { PAGE_SIZE } from '$lib/utils/paging';
   import { Plus, Search, Trash2, X } from 'lucide-svelte';
@@ -287,16 +288,9 @@
 </div>
 
 <div class="mb-4 flex flex-wrap items-center gap-3">
-  <div class="inline-flex rounded-[11px] bg-[var(--om-fill-muted)] p-1" role="tablist">
+  <div class="inline-flex {SEG_GROUP}" role="tablist">
     {#each TABS as [key, label]}
-      {@const active = tab === key}
-      <button
-        role="tab"
-        aria-selected={active}
-        class="rounded-[8px] px-5 text-[14px] transition-colors {active ? 'bg-[var(--om-brand-tint)] font-semibold shadow-[inset_0_0_0_2px_var(--om-brand)]' : 'font-medium text-[var(--om-ink-2)] hover:bg-[var(--om-fill-hover)]'}"
-        style="min-height: calc(var(--om-tap) - 8px)"
-        onclick={() => setTab(key)}
-      >{language.t(label)}</button>
+      <button role="tab" aria-selected={tab === key} class="{seg(tab === key)} !px-5" style="height: var(--om-tap)" onclick={() => setTab(key)}>{language.t(label)}</button>
     {/each}
   </div>
   <div class="flex-1"></div>

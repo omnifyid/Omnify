@@ -8,6 +8,7 @@
   import { api, mediaUrl } from '$lib/api/client';
   import { paginatedItems } from '$lib/api/pagination';
   import type { Category, ChannelSetting, Ingredient, Item, OrderChannel, PaginatedResponse, RecipeLine } from '$lib/api/types';
+  import IngredientPicker from '$lib/components/IngredientPicker.svelte';
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { getItemPrice } from '$lib/utils/catalog';
@@ -54,8 +55,8 @@
   }
 
   let recipeItem = $state<Item | null>(null);
-  let recipeLines = $state<{ ingredient_id: string; quantity: string }[]>([]);
-  let recipeIngredients = $state<Ingredient[]>([]);
+  type RecipeEditLine = { ingredient_id: string; name: string; unit: string; cost_price: number; quantity: string };
+  let recipeLines = $state<RecipeEditLine[]>([]);
   let savingRecipe = $state(false);
   let editingItemId = $state<string | null>(null);
   let editProductName = $state('');
@@ -344,12 +345,8 @@
     closeEditModal();
     error = '';
     try {
-      const [ings, lines] = await Promise.all([
-        api.get<PaginatedResponse<Ingredient>>(`/stores/${storeId}/ingredients?limit=500&offset=0`),
-        api.get<RecipeLine[]>(`/stores/${storeId}/items/${item.id}/recipe`)
-      ]);
-      recipeIngredients = paginatedItems(ings);
-      recipeLines = lines.map((l) => ({ ingredient_id: l.ingredient_id, quantity: String(l.quantity) }));
+      const lines = await api.get<RecipeLine[]>(`/stores/${storeId}/items/${item.id}/recipe`);
+      recipeLines = lines.map((l) => ({ ingredient_id: l.ingredient_id, name: l.ingredient_name, unit: l.unit, cost_price: l.cost_price, quantity: String(l.quantity) }));
       recipeItem = item;
     } catch (err) {
       error = err instanceof Error ? err.message : language.t('error');
@@ -361,15 +358,14 @@
     recipeLines = [];
   }
 
-  function recipeUnit(id: string) {
-    return recipeIngredients.find((i) => i.id === id)?.unit ?? '';
+  function addRecipeLine(ing: Ingredient) {
+    recipeLines.push({ ingredient_id: ing.id, name: ing.name, unit: ing.unit, cost_price: ing.cost_price, quantity: '' });
   }
 
   let recipeCost = $derived(
     recipeLines.reduce((sum, l) => {
-      const ing = recipeIngredients.find((i) => i.id === l.ingredient_id);
       const q = parseFloat(l.quantity.replace(',', '.'));
-      return sum + (ing && q > 0 ? ing.cost_price * q : 0);
+      return sum + (q > 0 ? l.cost_price * q : 0);
     }, 0)
   );
 
@@ -835,29 +831,20 @@
         <button class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)]" onclick={closeRecipeEditor} aria-label={language.t('close')}><X class="h-4 w-4" /></button>
       </div>
       <div class="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
-        {#if recipeIngredients.length === 0}
-          <p class="text-sm text-[var(--text-muted)]">{language.t('invRecipeNoIngredients')}</p>
-        {:else}
-          {#if recipeLines.length === 0}
-            <p class="text-sm text-[var(--text-muted)]">{language.t('invRecipeNone')}</p>
-          {/if}
-          {#each recipeLines as line, index}
-            <div class="flex items-center gap-1.5">
-              <select class="field min-w-0 flex-1 py-2 text-sm" bind:value={line.ingredient_id}>
-                <option value="">{language.t('invRecipePick')}</option>
-                {#each recipeIngredients as ing}
-                  <option value={ing.id} disabled={ing.id !== line.ingredient_id && recipeLines.some((l) => l.ingredient_id === ing.id)}>{ing.name} ({ing.unit})</option>
-                {/each}
-              </select>
-              <div class="field flex w-[7.5rem] shrink-0 items-center gap-1 py-2">
-                <input class="min-w-0 flex-1 bg-transparent text-right text-sm outline-none" inputmode="decimal" placeholder="0" aria-label={language.t('invRecipeQty')} bind:value={line.quantity} />
-                <span class="text-xs text-[var(--text-muted)]">{recipeUnit(line.ingredient_id)}</span>
-              </div>
-              <button class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-500" onclick={() => (recipeLines = recipeLines.filter((_, i) => i !== index))}><X class="h-3.5 w-3.5" /></button>
-            </div>
-          {/each}
-          <button class="text-xs font-bold text-[var(--warm-brown)]" onclick={() => recipeLines.push({ ingredient_id: '', quantity: '' })}>+ {language.t('invRecipeAdd')}</button>
+        {#if recipeLines.length === 0}
+          <p class="text-sm text-[var(--text-muted)]">{language.t('invRecipeNone')}</p>
         {/if}
+        {#each recipeLines as line, index (line.ingredient_id)}
+          <div class="flex items-center gap-1.5">
+            <div class="field min-w-0 flex-1 truncate py-2 text-sm">{line.name}</div>
+            <div class="field flex w-[7.5rem] shrink-0 items-center gap-1 py-2">
+              <input class="min-w-0 flex-1 bg-transparent text-right text-sm outline-none" inputmode="decimal" placeholder="0" aria-label={language.t('invRecipeQty')} bind:value={line.quantity} />
+              <span class="text-xs text-[var(--text-muted)]">{line.unit}</span>
+            </div>
+            <button class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-500" onclick={() => (recipeLines = recipeLines.filter((_, i) => i !== index))}><X class="h-3.5 w-3.5" /></button>
+          </div>
+        {/each}
+        <IngredientPicker placeholder={`+ ${language.t('invRecipeAdd')}`} emptyText={language.t('invRecipeNoIngredients')} exclude={recipeLines.map((l) => l.ingredient_id)} onPick={addRecipeLine} />
       </div>
       <div class="flex items-center gap-3 border-t border-[var(--border)] p-4">
         <div class="flex-1 text-sm text-[var(--text-muted)]">{language.t('invRecipeCost')}: <strong class="text-[var(--espresso)]">{formatRupiah(Math.round(recipeCost))}</strong></div>

@@ -12,6 +12,7 @@
   import { CHANNEL_META } from '$lib/utils/channels';
   import Pagination from '$lib/components/Pagination.svelte';
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
+  import { chip, CHIP_ROW, seg, SEG_GROUP } from '$lib/utils/ui';
   import { PAGE_SIZE } from '$lib/utils/paging';
 
   type Period = 'today' | 'yday' | '7d' | '30d';
@@ -282,11 +283,6 @@
     return () => clearInterval(t);
   });
 
-  // Same look as new-ui: the active segment/chip gets the brand tint and a brand outline.
-  const seg = (on: boolean) =>
-    `shrink-0 rounded-[8px] px-3 font-semibold transition-colors ${on ? 'bg-[var(--om-brand-tint)] text-[var(--om-ink)] shadow-[inset_0_0_0_2px_var(--om-brand)]' : 'text-[var(--om-text-secondary)] hover:bg-[var(--om-fill-hover)]'}`;
-  const chip = (on: boolean) =>
-    `flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 font-medium transition-colors ${on ? 'border-[var(--om-brand)] bg-[var(--om-brand-tint)] text-[var(--om-ink)]' : 'border-[var(--om-border)] bg-white text-[var(--om-ink-2)]'}`;
   const viewBtn = (on: boolean) =>
     `grid h-11 w-11 place-items-center rounded-[9px] text-[var(--om-ink)] ${on ? 'bg-white shadow-[0_1px_2px_rgba(16,20,15,.12)]' : ''}`;
   const channelFilters = $derived([
@@ -314,12 +310,12 @@
 {/if}
 
 <div class="mb-3 flex flex-wrap items-center gap-2.5">
-  <div class="flex max-w-full overflow-x-auto rounded-[11px] bg-[#EDECE7] p-1" role="group">
+  <div class={SEG_GROUP} role="group">
     {#each PERIODS as p (p.id)}
       <button class={seg(period === p.id)} style="height: var(--om-tap)" aria-pressed={period === p.id} onclick={() => { period = p.id; pageNo = 1; }}>{language.t(p.key)}</button>
     {/each}
   </div>
-  <div class="flex min-w-0 flex-[1_1_300px] flex-nowrap gap-1.5 overflow-x-auto md:flex-wrap md:overflow-visible">
+  <div class="min-w-0 flex-[1_1_300px] {CHIP_ROW}">
     {#each channelFilters as c (c.id)}
       <button class={chip(channelFilter === c.id)} style="height: var(--om-tap)" onclick={() => { channelFilter = c.id; pageNo = 1; }}>{language.t(c.key)}</button>
     {/each}
@@ -334,7 +330,7 @@
   </div>
 </div>
 
-<div class="mb-3.5 flex flex-nowrap gap-1.5 overflow-x-auto md:flex-wrap md:overflow-visible">
+<div class="mb-3.5 {CHIP_ROW}">
   {#each STATUS_FILTERS.filter((f) => !f.kitchen || kitchenOn) as f (f.id)}
     <button class="{chip(statusFilter === f.id)} !px-3.5" style="height: var(--om-tap)" onclick={() => { statusFilter = f.id; pageNo = 1; }}>{language.t(f.key)}</button>
   {/each}

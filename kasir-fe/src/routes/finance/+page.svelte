@@ -3,6 +3,7 @@
   import ShiftsPanel from '$lib/components/ShiftsPanel.svelte';
   import SettlementsPanel from '$lib/components/SettlementsPanel.svelte';
   import { language } from '$lib/i18n/language.svelte';
+  import { seg, SEG_GROUP } from '$lib/utils/ui';
 
   let tab = $state<'shift' | 'expenses' | 'settle'>('shift');
   const tabs = [
@@ -14,12 +15,9 @@
 
 <svelte:head><title>{language.t('finance')} | Omnify</title></svelte:head>
 
-<div class="mb-4 inline-flex gap-1 rounded-[11px] bg-[#EDECE7] p-1">
+<div class="mb-4 inline-flex {SEG_GROUP}" role="tablist">
   {#each tabs as t (t.id)}
-    <button
-      class="rounded-lg px-4 py-2 text-sm font-semibold transition {tab === t.id ? 'bg-white shadow-sm' : 'text-[var(--text-muted)]'}"
-      onclick={() => (tab = t.id)}
-    >{language.t(t.key)}</button>
+    <button role="tab" aria-selected={tab === t.id} class={seg(tab === t.id)} style="height: var(--om-tap)" onclick={() => (tab = t.id)}>{language.t(t.key)}</button>
   {/each}
 </div>
 

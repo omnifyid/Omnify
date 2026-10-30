@@ -7,6 +7,7 @@
   import { shiftState } from '$lib/stores/shift.svelte';
   import { CASH_IN_CATEGORIES, CASH_OUT_TRANSFERS, EXPENSE_CATEGORIES, formatDigits, parseAmount } from '$lib/utils/finance';
   import { formatRupiah } from '$lib/utils/format';
+  import { chip } from '$lib/utils/ui';
 
   type Mode = 'open' | 'close' | 'in' | 'out' | null;
 
@@ -92,8 +93,6 @@
     }
   }
 
-  const chip = (on: boolean) =>
-    `h-9 shrink-0 whitespace-nowrap rounded-full border px-3 text-sm font-medium transition ${on ? 'border-[var(--om-ink)] bg-[var(--om-ink)] text-white' : 'border-[var(--border)] bg-white text-[var(--espresso)]'}`;
   const label = 'mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]';
   const title = $derived(
     mode === 'open' ? 'shiftOpenTitle' : mode === 'close' ? 'shiftCloseTitle' : mode === 'in' ? 'shiftCashIn' : 'shiftCashOut'
@@ -165,7 +164,7 @@
           {:else}
             <div>
               <span class={label}>{language.t('shiftMovCategory')}</span>
-              <div class="flex flex-wrap gap-1.5">{#each categories as c}<button class={chip(category === c)} onclick={() => (category = c)}>{c}</button>{/each}</div>
+              <div class="flex flex-wrap gap-1.5">{#each categories as c}<button class={chip(category === c)} style="min-height: 40px" onclick={() => (category = c)}>{c}</button>{/each}</div>
               {#if mode === 'out' && EXPENSE_CATEGORIES.includes(category)}<div class="mt-1 text-xs text-[var(--text-muted)]">→ {language.t('finTabExpenses')}</div>{/if}
             </div>
             <label class="block"><span class={label}>{language.t('shiftMovReason')}</span><input class="field" maxlength="200" bind:value={text} /></label>

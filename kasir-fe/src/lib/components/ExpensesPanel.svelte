@@ -8,6 +8,7 @@
   import type { MessageKey } from '$lib/i18n/messages';
   import { session } from '$lib/stores/session.svelte';
   import { EXPENSE_CATEGORIES } from '$lib/utils/finance';
+  import { chip, seg, SEG_GROUP } from '$lib/utils/ui';
   import { formatRupiah } from '$lib/utils/format';
   import { PAGE_SIZE, pageCount } from '$lib/utils/paging';
   import Pagination from './Pagination.svelte';
@@ -144,8 +145,6 @@
     }
   }
 
-  const chip = (on: boolean) =>
-    `h-10 shrink-0 whitespace-nowrap rounded-full border px-3 text-sm font-medium transition ${on ? 'border-[var(--om-ink)] bg-[var(--om-ink)] text-white' : 'border-[var(--border)] bg-white text-[var(--espresso)]'}`;
 </script>
 
 {#if error}
@@ -153,9 +152,9 @@
 {/if}
 
 <div class="mb-4 flex flex-wrap items-center gap-3">
-  <div class="flex gap-1.5 overflow-x-auto">
+  <div class={SEG_GROUP} role="group">
     {#each PERIODS as p (p.id)}
-      <button class={chip(period === p.id)} onclick={() => { period = p.id; page = 1; }}>{language.t(p.key)}</button>
+      <button class={seg(period === p.id)} style="height: var(--om-tap)" aria-pressed={period === p.id} onclick={() => { period = p.id; page = 1; }}>{language.t(p.key)}</button>
     {/each}
   </div>
   <select class="field w-auto" bind:value={category} onchange={() => (page = 1)}>
@@ -233,7 +232,7 @@
         <div>
           <span class="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('finCategory')}</span>
           <div class="flex flex-wrap gap-1.5">
-            {#each CATEGORIES as c}<button class={chip(fCategory === c)} onclick={() => (fCategory = c)}>{c}</button>{/each}
+            {#each CATEGORIES as c}<button class={chip(fCategory === c)} style="min-height: 40px" onclick={() => (fCategory = c)}>{c}</button>{/each}
           </div>
         </div>
         <label class="block"><span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('finDescription')}</span><input class="field" maxlength="200" bind:value={fDescription} /></label>
@@ -244,7 +243,7 @@
         <div>
           <span class="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('finSource')}</span>
           <div class="flex flex-wrap gap-1.5">
-            {#each SOURCES as s}<button class={chip(fSource === s.id)} onclick={() => (fSource = s.id)}>{language.t(s.key)}</button>{/each}
+            {#each SOURCES as s}<button class={chip(fSource === s.id)} style="min-height: 40px" onclick={() => (fSource = s.id)}>{language.t(s.key)}</button>{/each}
           </div>
         </div>
         <label class="flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" bind:checked={fRecurring} />{language.t('finRecurringToggle')}</label>

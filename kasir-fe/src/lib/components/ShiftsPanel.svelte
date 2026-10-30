@@ -9,6 +9,7 @@
   import { shiftState } from '$lib/stores/shift.svelte';
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
   import { PAGE_SIZE } from '$lib/utils/paging';
+  import { chip, CHIP_ROW, seg, SEG_GROUP } from '$lib/utils/ui';
   import Pagination from './Pagination.svelte';
 
   const PERIODS: { id: number; key: MessageKey }[] = [
@@ -111,8 +112,6 @@
 
   const varCls = (v: number | null) =>
     !v ? '' : Math.abs(v) > threshold ? 'text-red-700' : v < 0 ? 'text-amber-700' : 'text-[var(--om-brand)]';
-  const chip = (on: boolean) =>
-    `h-10 shrink-0 whitespace-nowrap rounded-full border px-3 text-sm font-medium transition ${on ? 'border-[var(--om-ink)] bg-[var(--om-ink)] text-white' : 'border-[var(--border)] bg-white text-[var(--espresso)]'}`;
   const FILTERS: { id: typeof filter; key: MessageKey }[] = [
     { id: 'all', key: 'shiftFilterAll' },
     { id: 'OPEN', key: 'shiftStatusOpen' },
@@ -126,8 +125,8 @@
   <div class="mb-5 rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">{error}</div>
 {/if}
 
-<div class="mb-4 flex flex-wrap gap-1.5 overflow-x-auto">
-  {#each PERIODS as p (p.id)}<button class={chip(period === p.id)} onclick={() => { period = p.id; page = 1; }}>{language.t(p.key)}</button>{/each}
+<div class="mb-4 {SEG_GROUP}" role="group">
+  {#each PERIODS as p (p.id)}<button class={seg(period === p.id)} style="height: var(--om-tap)" aria-pressed={period === p.id} onclick={() => { period = p.id; page = 1; }}>{language.t(p.key)}</button>{/each}
 </div>
 
 <div class="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -136,8 +135,8 @@
   {/each}
 </div>
 
-<div class="mb-3 flex flex-wrap gap-1.5 overflow-x-auto">
-  {#each FILTERS as f (f.id)}<button class={chip(filter === f.id)} onclick={() => { filter = f.id; page = 1; }}>{language.t(f.key)}</button>{/each}
+<div class="mb-3 {CHIP_ROW}">
+  {#each FILTERS as f (f.id)}<button class="{chip(filter === f.id)} !px-3.5" style="height: var(--om-tap)" onclick={() => { filter = f.id; page = 1; }}>{language.t(f.key)}</button>{/each}
 </div>
 
 <div class="card overflow-hidden" class:opacity-60={loading}>

@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
-from app.models import Discount
+from app.models import Discount, Item, ItemCategory
 from app.models.discount import DiscountScope, DiscountTarget, DiscountType
 from app.schemas.discount import DiscountCreate, DiscountUpdate
 
@@ -17,7 +17,27 @@ async def list_discounts(
     total_result = await db.execute(select(func.count()).select_from(base.subquery()))
     total = total_result.scalar_one()
     result = await db.execute(base.offset(offset).limit(limit))
-    return list(result.scalars().all()), total
+    discounts = list(result.scalars().all())
+    await _attach_target_names(discounts, db)
+    return discounts, total
+
+
+async def _attach_target_names(discounts: list[Discount], db: AsyncSession) -> None:
+    item_ids = {d.target_item_id for d in discounts if d.target_item_id}
+    cat_ids = {d.target_category_id for d in discounts if d.target_category_id}
+    item_names = (
+        dict((await db.execute(select(Item.id, Item.name).where(Item.id.in_(item_ids)))).all())
+        if item_ids
+        else {}
+    )
+    cat_names = (
+        dict((await db.execute(select(ItemCategory.id, ItemCategory.name).where(ItemCategory.id.in_(cat_ids)))).all())
+        if cat_ids
+        else {}
+    )
+    for d in discounts:
+        d.target_item_name = item_names.get(d.target_item_id)
+        d.target_category_name = cat_names.get(d.target_category_id)
 
 
 async def create_discount(

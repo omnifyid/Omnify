@@ -74,6 +74,9 @@ class DiscountRead(BaseModel):
     target_type: DiscountTarget | None
     target_item_id: uuid.UUID | None
     target_category_id: uuid.UUID | None
+    # names of the targets, filled by the list endpoint so the UI needs no product list
+    target_item_name: str | None = None
+    target_category_name: str | None = None
     is_automatic: bool
 
     model_config = {"from_attributes": True}

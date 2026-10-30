@@ -5,11 +5,9 @@
   import { toCategoryPayload } from '$lib/api/catalog';
   import { api } from '$lib/api/client';
   import { paginatedItems } from '$lib/api/pagination';
-  import type { Category, Item, PaginatedResponse } from '$lib/api/types';
+  import type { Category, PaginatedResponse } from '$lib/api/types';
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
-  import { getItemPrice } from '$lib/utils/catalog';
-  import { formatRupiah } from '$lib/utils/format';
   import { Trash2, X } from 'lucide-svelte';
 
   const categoryIcons = [
@@ -38,7 +36,6 @@
   let { tabs }: { tabs?: Snippet } = $props();
 
   let categories = $state<Category[]>([]);
-  let allItems = $state<Item[]>([]);
   let name = $state('');
   let icon = $state('');
   let editName = $state('');
@@ -59,17 +56,6 @@
 
   let sortedCategories = $derived([...categories].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name)));
 
-  type CategoryStats = { count: number; avg: number; names: string };
-  let stats = $derived.by(() => {
-    const map = new Map<string, CategoryStats>();
-    for (const c of categories) {
-      const list = allItems.filter((i) => i.category_id === c.id);
-      const sum = list.reduce((a, i) => a + getItemPrice(i), 0);
-      map.set(c.id, { count: list.length, avg: list.length ? Math.round(sum / list.length) : 0, names: list.map((i) => i.name).join(', ') });
-    }
-    return map;
-  });
-
   async function load() {
     const storeId = session.selectedStore?.id;
     if (!storeId) return;
@@ -77,12 +63,8 @@
     loading = true;
     error = '';
     try {
-      const [res, itemsRes] = await Promise.all([
-        api.get<PaginatedResponse<Category>>(`/stores/${storeId}/categories?limit=${limit}&offset=${(page - 1) * limit}`),
-        api.get<PaginatedResponse<Item>>(`/stores/${storeId}/items?limit=500`)
-      ]);
+      const res = await api.get<PaginatedResponse<Category>>(`/stores/${storeId}/categories?limit=${limit}&offset=${(page - 1) * limit}`);
       categories = paginatedItems(res);
-      allItems = paginatedItems(itemsRes);
       total = res.total;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load categories';
@@ -258,31 +240,39 @@
   <div role="alert" class="mb-4 flex items-center gap-2 rounded-[12px] bg-[var(--om-danger-tint)] p-3 text-[14px] font-semibold text-[var(--om-danger)]"><span class="ms">error</span>{error}</div>
 {/if}
 
-<div class="grid gap-3.5" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); grid-auto-rows: max-content">
-  {#each displayCategories as category (category.id)}
-    {@const st = stats.get(category.id)}
+<div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); grid-auto-rows: max-content">
+  {#each displayCategories as category, index (category.id)}
     <div
       data-cat-id={category.id}
-      class="flex gap-3 rounded-[14px] border bg-white p-[18px] transition-colors {dragId === category.id ? 'border-[var(--om-brand)] opacity-70 shadow-[var(--om-sh-popover)]' : 'border-[var(--om-border)]'}"
+      class="group flex flex-col gap-2.5 rounded-[14px] border bg-white p-3 transition duration-150 {dragId === category.id ? 'border-[var(--om-brand)] opacity-70 shadow-[var(--om-sh-popover)]' : 'border-[var(--om-border)] hover:-translate-y-0.5 hover:border-[var(--om-brand)] hover:shadow-[var(--om-sh-popover)]'}"
     >
-      <div class="flex min-w-0 flex-1 flex-col gap-3">
-        <div class="flex items-center gap-3">
-          <div class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[var(--om-ink)] text-[22px]">{category.icon ?? '🍽️'}</div>
-          <div class="flex min-w-0 flex-1 flex-col">
-            <span class="truncate text-[16px] font-semibold">{category.name}</span>
-            <span class="text-[12px] text-[var(--om-text-secondary)]">
-              {`${st?.count ?? 0} ${language.t('products').toLowerCase()}${st?.count ? ` · ${language.t('averageShort')} ${formatRupiah(st.avg)}` : ''}`}
-            </span>
-          </div>
+      <div class="flex items-center gap-2.5">
+        <div class="relative shrink-0">
+          <div class="grid h-12 w-12 place-items-center rounded-xl bg-[var(--om-ink)] text-[24px]">{category.icon ?? '🍽️'}</div>
+          <span class="absolute -left-1.5 -top-1.5 grid min-w-[22px] place-items-center rounded-full border-2 border-white bg-[var(--om-brand)] px-1 text-[11px] font-bold leading-[18px] tabular-nums text-white">{(page - 1) * limit + index + 1}</span>
         </div>
-        <span class="line-clamp-3 text-[12px] leading-[1.5] text-[var(--om-ink-2)]">{st?.names || '—'}</span>
+        <span class="min-w-0 flex-1 truncate text-[18px] font-semibold">{category.name}</span>
+        <div class="flex shrink-0 flex-col items-end leading-none">
+          <span class="text-[40px] font-bold tabular-nums tracking-tight">{category.item_count ?? 0}</span>
+          <span class="mt-0.5 text-[12px] text-[var(--om-text-secondary)]">{language.t('products').toLowerCase()}</span>
+        </div>
       </div>
 
-      <div class="flex shrink-0 flex-col justify-between gap-1.5">
+      <div class="grid grid-cols-[1fr_1fr_36px] gap-1.5">
+        <button
+          class="flex h-9 items-center justify-center gap-1.5 rounded-[9px] border border-[var(--om-border)] bg-white text-[14px] font-semibold text-[var(--om-ink)] transition-colors hover:border-[var(--om-brand)] hover:bg-[var(--om-brand-tint)]"
+          onclick={() => openEdit(category)}
+          aria-label={`${language.t('editCategory')}: ${category.name}`}
+        ><span class="ms !text-[18px]">edit</span>{language.t('editShort')}</button>
+        <button
+          class="flex h-9 items-center justify-center gap-1.5 rounded-[9px] border border-[var(--om-border)] bg-white text-[14px] font-semibold text-[var(--om-ink)] transition-colors hover:border-[var(--om-brand)] hover:bg-[var(--om-brand-tint)]"
+          onclick={() => goto(`/products?cat=${category.id}`)}
+          aria-label={`${language.t('products')}: ${category.name}`}
+        ><span class="ms !text-[18px]">format_list_bulleted</span>{language.t('products')}</button>
         <button
           type="button"
           data-handle
-          class="grid h-9 w-9 touch-none place-items-center rounded-[8px] border border-[var(--om-border)] bg-white text-[var(--om-text-secondary)] hover:bg-[var(--om-fill-hover)] {dragId === category.id ? 'cursor-grabbing' : 'cursor-grab'}"
+          class="grid h-9 w-9 touch-none place-items-center rounded-[9px] text-[var(--om-text-secondary)] hover:bg-[var(--om-fill-hover)] {dragId === category.id ? 'cursor-grabbing' : 'cursor-grab'}"
           aria-label={`${language.t('reorder')}: ${category.name}`}
           disabled={reordering}
           onpointerdown={(e) => startDrag(e, category)}
@@ -292,17 +282,6 @@
           onlostpointercapture={endDrag}
           onkeydown={(e) => keyMove(e, category)}
         ><span class="ms !text-[20px]">drag_indicator</span></button>
-        <button
-          class="grid h-9 w-9 place-items-center rounded-[8px] border border-[var(--om-border)] bg-white text-[var(--om-ink-2)] hover:bg-[var(--om-fill-hover)]"
-          onclick={() => openEdit(category)}
-          aria-label={`${language.t('editCategory')}: ${category.name}`}
-        ><span class="ms !text-[18px]">edit</span></button>
-        <button
-          class="grid h-9 w-9 place-items-center rounded-[8px] border border-[var(--om-border)] bg-white text-[var(--om-ink-2)] hover:bg-[var(--om-fill-hover)]"
-          onclick={() => goto(`/products?cat=${category.id}`)}
-          aria-label={`${language.t('products')}: ${category.name}`}
-          title={language.t('products')}
-        ><span class="ms !text-[18px]">format_list_bulleted</span></button>
       </div>
     </div>
   {:else}

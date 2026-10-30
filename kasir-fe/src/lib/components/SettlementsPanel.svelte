@@ -8,6 +8,7 @@
   import { session } from '$lib/stores/session.svelte';
   import { CHANNEL_META } from '$lib/utils/channels';
   import { formatRupiah } from '$lib/utils/format';
+  import { chip } from '$lib/utils/ui';
   import Pagination from './Pagination.svelte';
 
   const META = CHANNEL_META;
@@ -182,8 +183,6 @@
     return { label: language.t('finPending'), cls: 'bg-[var(--cream)] text-[var(--espresso)]' };
   }
 
-  const chip = (on: boolean) =>
-    `h-9 shrink-0 whitespace-nowrap rounded-full border px-3 text-sm font-medium transition ${on ? 'border-[var(--om-ink)] bg-[var(--om-ink)] text-white' : 'border-[var(--border)] bg-white text-[var(--espresso)]'}`;
 </script>
 
 {#if error}
@@ -268,9 +267,9 @@
         <div>
           <div class="mb-2 flex flex-wrap items-center gap-2">
             <span class="flex-1 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('finSelectOrders')} · {chosenIds.length} {language.t('finSelected')}</span>
-            <button class={chip(false)} onclick={() => selectUpTo(null)}>{language.t('finSelectAll')}</button>
-            <button class={chip(false)} onclick={() => selectUpTo(today())}>{language.t('finSelectDue')}</button>
-            <button class={chip(false)} onclick={() => selectUpTo('none')}>{language.t('finSelectNone')}</button>
+            <button class={chip(false)} style="min-height: 40px" onclick={() => selectUpTo(null)}>{language.t('finSelectAll')}</button>
+            <button class={chip(false)} style="min-height: 40px" onclick={() => selectUpTo(today())}>{language.t('finSelectDue')}</button>
+            <button class={chip(false)} style="min-height: 40px" onclick={() => selectUpTo('none')}>{language.t('finSelectNone')}</button>
           </div>
           <div class="max-h-60 overflow-y-auto rounded-xl border border-[var(--border)]">
             {#each modalRows as r (r.id)}
@@ -299,7 +298,7 @@
           <div class="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--cream)] p-3">
             <div class="flex justify-between text-sm font-semibold"><span>{language.t('finDiff')}</span><span class="tabular-nums {diff < 0 ? 'text-red-700' : 'text-[var(--om-brand)]'}">{signed(diff)}</span></div>
             <div class="text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('finDiffReason')}</div>
-            <div class="flex flex-wrap gap-1.5">{#each REASONS as r}<button class={chip(fReason === r)} onclick={() => (fReason = r)}>{r}</button>{/each}</div>
+            <div class="flex flex-wrap gap-1.5">{#each REASONS as r}<button class={chip(fReason === r)} style="min-height: 40px" onclick={() => (fReason = r)}>{r}</button>{/each}</div>
             {#if fReason}<input class="field" placeholder={language.t('finReasonNote')} bind:value={fNote} />{/if}
           </div>
         {/if}

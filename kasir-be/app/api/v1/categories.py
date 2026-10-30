@@ -38,6 +38,7 @@ async def list_categories(
             }
 
     categories, total = await item_service.list_categories(store_id, db, limit, offset)
+    await item_service.attach_category_stats(store_id, categories, db)
 
     if offset == 0 and limit >= 50:
         await cache.set(

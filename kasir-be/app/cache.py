@@ -55,9 +55,5 @@ def menu_key(store_id: str) -> str:
     return f"menu:{store_id}"
 
 
-def items_key(store_id: str) -> str:
-    return f"items:{store_id}"
-
-
 def cats_key(store_id: str) -> str:
     return f"cats:{store_id}"

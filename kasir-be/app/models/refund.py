@@ -16,6 +16,7 @@ class RefundType(str, enum.Enum):
 class RefundMethod(str, enum.Enum):
     CASH = "CASH"  # paid out of the drawer; needs an open shift
     TRANSFER = "TRANSFER"
+    NONE = "NONE"  # a line taken off an unpaid open bill: no money moved
 
 
 class OrderRefund(Base):

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class OptionChoiceCreate(BaseModel):
     label: str = Field(min_length=1, max_length=100)
     is_default: bool = False
+    extra_price: int = Field(default=0, ge=0)
     sort_order: int = 0
 
 
@@ -13,6 +14,7 @@ class OptionChoiceRead(BaseModel):
     id: uuid.UUID
     label: str
     is_default: bool
+    extra_price: int = 0
     sort_order: int
 
     model_config = {"from_attributes": True}
@@ -39,6 +41,7 @@ class AddonChoiceCreate(BaseModel):
     label: str = Field(min_length=1, max_length=100)
     extra_price: int = Field(ge=0)
     is_available: bool = True
+    is_default: bool = False
     sort_order: int = 0
 
 
@@ -47,6 +50,7 @@ class AddonChoiceRead(BaseModel):
     label: str
     extra_price: int
     is_available: bool
+    is_default: bool = False
     sort_order: int
 
     model_config = {"from_attributes": True}
@@ -97,6 +101,10 @@ class ItemUpdate(BaseModel):
     sort_order: int | None = None
     stock: int | None = Field(default=None, ge=0)
     icon: str | None = Field(default=None, max_length=16)
+    # None = leave unchanged; a list (even empty) replaces everything
+    option_groups: list[OptionGroupCreate] | None = None
+    addon_groups: list[AddonGroupCreate] | None = None
+    channel_prices: dict[str, int | None] | None = None
 
 
 class StockUpdate(BaseModel):

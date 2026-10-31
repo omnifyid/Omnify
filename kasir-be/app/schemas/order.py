@@ -15,6 +15,7 @@ class CartItemIn(BaseModel):
     quantity: int = Field(ge=1)
     selected_option_choice_ids: list[uuid.UUID] = []
     selected_addon_choice_ids: list[uuid.UUID] = []
+    note: str | None = Field(default=None, max_length=200)  # custom note for this line
 
     @model_validator(mode="after")
     def item_xor_package(self) -> "CartItemIn":
@@ -31,21 +32,50 @@ class OrderCreate(BaseModel):
     order_type: Literal["DINE_IN", "TAKE_AWAY"] | None = None
     table_number: str | None = None
     customer_name: str | None = None
+    guest_count: int | None = Field(default=None, ge=1, le=999)
+    segment: str | None = Field(default=None, max_length=40)
     channel: OrderChannel | None = None
     channel_order_id: str | None = Field(default=None, max_length=50)
     app_total: int | None = Field(default=None, ge=0)
     driver_name: str | None = Field(default=None, max_length=100)
     payment_provider: str | None = Field(default=None, max_length=40)  # EDC bank / QRIS provider
     cash_received: int | None = Field(default=None, ge=0)  # cash handed over; must cover the total
+    open_bill: bool = False  # save unpaid and send to the kitchen; paid later via POST /orders/{id}/pay
 
     @model_validator(mode="after")
     def check_channel(self) -> "OrderCreate":
         if self.channel:
+            if self.open_bill:
+                raise ValueError("Online platform orders cannot be open bills")
             if not (self.channel_order_id or "").strip():
                 raise ValueError("channel_order_id is required for online orders")
             self.payment_method = PaymentMethod.PLATFORM
+        elif self.open_bill:
+            self.payment_method = self.payment_method or PaymentMethod.CASH  # placeholder until paid
         elif self.payment_method is None:
             raise ValueError("payment_method is required")
+        return self
+
+
+class OrderAddItems(BaseModel):
+    """Extra lines for an open bill, plus optional changes to its table / guest details."""
+
+    items: list[CartItemIn] = Field(min_length=1)
+    table_number: str | None = None
+    customer_name: str | None = None
+    guest_count: int | None = Field(default=None, ge=1, le=999)
+    segment: str | None = Field(default=None, max_length=40)
+
+
+class OrderPay(BaseModel):
+    payment_method: PaymentMethod
+    payment_provider: str | None = Field(default=None, max_length=40)
+    cash_received: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def not_platform(self) -> "OrderPay":
+        if self.payment_method == PaymentMethod.PLATFORM:
+            raise ValueError("PLATFORM is not a payment method for open bills")
         return self
 
 
@@ -66,6 +96,8 @@ class OrderItemRead(BaseModel):
     line_total: int
     options_snapshot: list | None
     addons_snapshot: list | None
+    note: str | None = None
+    added_at: datetime | None = None
     is_done: bool = False
     void_qty: int = 0
 
@@ -100,6 +132,8 @@ class OrderRead(BaseModel):
     order_type: str | None = None
     table_number: str | None = None
     customer_name: str | None = None
+    guest_count: int | None = None
+    segment: str | None = None
     kitchen_status: KitchenStatus | None = None
     channel: str | None = None
     channel_order_id: str | None = None
@@ -131,7 +165,7 @@ class RefundCreate(BaseModel):
 
 class VoidCreate(BaseModel):
     quantity: int = Field(gt=0)
-    method: RefundMethod
+    method: RefundMethod | None = None  # not needed on an open bill
     reason: str = Field(min_length=1, max_length=200)
 
 

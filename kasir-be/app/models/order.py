@@ -10,6 +10,7 @@ from .base import Base, TimestampMixin
 
 class OrderStatus(str, enum.Enum):
     PENDING = "PENDING"
+    OPEN = "OPEN"  # open bill: sent to the kitchen, paid later
     CONFIRMED = "CONFIRMED"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
@@ -60,6 +61,8 @@ class Order(Base, TimestampMixin):
     order_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     table_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
     customer_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    guest_count: Mapped[int | None] = mapped_column(Integer, nullable=True)  # head count
+    segment: Mapped[str | None] = mapped_column(String(40), nullable=True)  # market segment
     # null when the store has kitchen management off or the order is not yet confirmed
     kitchen_status: Mapped[KitchenStatus | None] = mapped_column(
         SAEnum(KitchenStatus, name="kitchen_status"), nullable=True, index=True

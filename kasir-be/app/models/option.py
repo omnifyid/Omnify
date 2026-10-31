@@ -36,6 +36,7 @@ class OptionChoice(Base):
     )
     label: Mapped[str] = mapped_column(String(100), nullable=False)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    extra_price: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # price delta, e.g. Large +6000
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     group: Mapped["OptionGroup"] = relationship(back_populates="choices")

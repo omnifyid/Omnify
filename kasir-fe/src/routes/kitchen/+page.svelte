@@ -113,6 +113,7 @@
     const labels = [...(it.options_snapshot ?? []), ...(it.addons_snapshot ?? [])]
       .map((m) => (m as { label?: string }).label)
       .filter(Boolean);
+    if (it.note) labels.push(`“${it.note}”`);
     return labels.join(', ');
   }
 
@@ -197,9 +198,9 @@
                       onclick={() => toggleItem(o, it.id, !it.is_done)}
                     >
                       <span class="ms text-xl {it.is_done ? 'fill text-[var(--om-brand-bright)]' : 'text-[#C9C7C0]'}">{it.is_done ? 'check_circle' : 'radio_button_unchecked'}</span>
-                      <span class="w-6 font-bold tabular-nums">{it.quantity}×</span>
+                      <span class="w-6 font-bold tabular-nums">{it.quantity - (it.void_qty ?? 0)}×</span>
                       <span class="min-w-0 flex-1">
-                        <span class="block {it.is_done ? 'line-through' : ''}">{it.item_name_snapshot}</span>
+                        <span class="block {it.is_done ? 'line-through' : ''}">{#if it.added_at && !it.is_done}<span class="mr-1.5 rounded-md bg-[var(--om-danger)] px-1.5 py-0.5 text-[11px] font-bold text-white">{language.t('obNewTag')}</span>{/if}{#if (it.void_qty ?? 0) > 0}<span class="mr-1.5 rounded-md bg-[var(--om-fill-muted)] px-1.5 py-0.5 text-[11px] font-bold text-[var(--om-danger)]">{language.t('obVoidTag')} ×{it.void_qty}</span>{/if}{it.item_name_snapshot}</span>
                         {#if modifiers(it)}<span class="block text-xs font-medium text-[#6A4400]">{modifiers(it)}</span>{/if}
                       </span>
                     </button>

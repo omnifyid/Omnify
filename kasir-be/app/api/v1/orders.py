@@ -13,7 +13,9 @@ from app.schemas.common import PaginatedResponse
 from app.schemas.order import (
     KitchenItemUpdate,
     KitchenStatusUpdate,
+    OrderAddItems,
     OrderCreate,
+    OrderPay,
     OrderPreviewRequest,
     OrderPreviewResponse,
     OrderRead,
@@ -37,6 +39,28 @@ async def create_order(
     return await order_service.create_order(store_id, current_user.id, payload, db)
 
 
+@router.post("/{store_id}/orders/{order_id}/items", response_model=OrderRead)
+async def add_order_items(
+    store_id: uuid.UUID,
+    order_id: uuid.UUID,
+    payload: OrderAddItems,
+    _: StoreMembership = Depends(AnyMember),
+    db: AsyncSession = Depends(get_db),
+):
+    return await order_service.add_items(order_id, store_id, payload, db)
+
+
+@router.post("/{store_id}/orders/{order_id}/pay", response_model=OrderRead)
+async def pay_order(
+    store_id: uuid.UUID,
+    order_id: uuid.UUID,
+    payload: OrderPay,
+    _: StoreMembership = Depends(AnyMember),
+    db: AsyncSession = Depends(get_db),
+):
+    return await order_service.pay_order(order_id, store_id, payload, db)
+
+
 @router.post("/{store_id}/orders/preview", response_model=OrderPreviewResponse)
 async def preview_order(
     store_id: uuid.UUID,
@@ -57,7 +81,8 @@ async def list_orders(
     operator_id: uuid.UUID | None = None,
     search: str | None = None,
     kind: Literal["dine", "take", "online"] | None = None,
-    state: Literal["verify", "kitchen", "ready", "confirmed", "done", "cancelled"] | None = None,
+    state: Literal["verify", "open", "kitchen", "ready", "confirmed", "done", "cancelled"] | None = None,
+    include_open: bool = False,  # keep unpaid open bills in the list whatever the date range
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     _: StoreMembership = Depends(AnyMember),
@@ -65,7 +90,7 @@ async def list_orders(
 ):
     orders, total = await order_service.list_orders(
         store_id, db, status, payment_method, date_from, date_to, operator_id, limit, offset,
-        search, kind, state,
+        search, kind, state, include_open,
     )
     return PaginatedResponse(items=orders, total=total, limit=limit, offset=offset)
 

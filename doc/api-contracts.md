@@ -81,6 +81,9 @@ api.delete(`/stores/${storeId}/discounts/${id}`)
 | `is_available` | bool \| null | Filter by availability (`true`, `false`, or omit for all) |
 | `stock_out` | bool | If `true`, returns only items with `stock <= 0` |
 | `is_sold` | bool \| null | `true` = sold at this branch (POS), `false` = switched off here, omit for all |
+| `include_groups` | bool | Default `true`. `false` leaves out option/add-on groups (list screens that only show rows); the editor loads them with `GET /items/{id}` |
+
+`PATCH /stores/{id}/items/{iid}` also accepts `stock`, `option_groups`, `addon_groups` and `channel_prices`; the editor saves a product with this one call (a field that is omitted stays unchanged).
 
 ### Orders (`GET /stores/{id}/orders`)
 

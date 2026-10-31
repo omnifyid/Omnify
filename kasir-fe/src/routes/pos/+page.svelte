@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { page } from '$app/stores';
   import { api, mediaUrl } from '$lib/api/client';
   import { toOrderPayload } from '$lib/api/orders';
   import { paginatedItems } from '$lib/api/pagination';
@@ -11,6 +12,7 @@
   import { getChoiceLabel, getChoicePrice, getGroupChoices, getGroupLabel, hasItemModifiers } from '$lib/utils/modifiers';
   import { printEscPos, canPrint } from '$lib/utils/bluetooth-printer';
   import { buildReceiptBytes } from '$lib/utils/escpos';
+  import CupcakeIcon from '$lib/components/CupcakeIcon.svelte';
   import ReceiptView from '$lib/components/ReceiptView.svelte';
   import { customerReceipt, receiptOptions } from '$lib/utils/receipt';
   import { chip, CHIP_ROW } from '$lib/utils/ui';
@@ -22,6 +24,7 @@
     quantity: number;
     optionChoiceIds: string[];
     addonChoiceIds: string[];
+    note: string;
   };
 
   const PAYMENT_ICONS: Record<string, string> = { CASH: '💵', CARD: '💳', QRIS: '▦', TRANSFER: '↗' };
@@ -58,6 +61,18 @@
   let receiptOrder = $state<Order | null>(null);
   let modifierItem = $state<Item | null>(null);
   let modifierQty = $state(1);
+  let modifierNote = $state('');
+  let modifierNoteOn = $state(false);
+  let payModalOpen = $state(false);
+  // open bill being paid; null = paying the cart
+  let payTarget = $state<Order | null>(null);
+  let toast = $state('');
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  function showToast(message: string) {
+    toast = message;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (toast = ''), 3200);
+  }
   let selectedOptionChoiceIds = $state<Record<string, string>>({});
   let selectedAddonChoiceIds = $state<string[]>([]);
 
@@ -94,11 +109,11 @@
     return manual || mk(getItemPrice(item));
   }
 
-  function addonTotal(item: Item, ids: string[]) {
-    return (item.addon_groups ?? []).reduce(
-      (sum, group) => sum + getGroupChoices(group).reduce((gs, c) => gs + (ids.includes(c.id) ? mk(getChoicePrice(c)) : 0), 0),
-      0
-    );
+  /** Extra price of the picked option and add-on choices. */
+  function addonTotal(item: Item, ids: string[], optionIds: string[] = []) {
+    const sum = (groups: Array<NonNullable<Item['option_groups']>[number] | NonNullable<Item['addon_groups']>[number]>, picked: string[]) =>
+      groups.reduce((s, group) => s + getGroupChoices(group).reduce((gs, c) => gs + (picked.includes(c.id) ? mk(getChoicePrice(c)) : 0), 0), 0);
+    return sum(item.addon_groups ?? [], ids) + sum(item.option_groups ?? [], optionIds);
   }
 
   function pickType(type: 'DINE_IN' | 'TAKE_AWAY') {
@@ -152,14 +167,14 @@
   let serviceFee = $derived(dineInActive ? feeRound(netDue, session.selectedStore?.service_bp ?? 0) : 0);
   let pb1Fee = $derived(onlineMode ? 0 : feeRound(netDue + serviceFee, session.selectedStore?.pb1_bp ?? 0));
   let totalDue = $derived(netDue + serviceFee + pb1Fee);
+  let payTotal = $derived(payTarget ? payTarget.total_amount : totalDue);
 
   let cashAmount = $state('0');
-  let cashModalOpen = $state(false);
   let receiptCashPaid = $state(0);
   let receiptOpts = $derived(receiptOptions(session.selectedStore));
   let receiptLines = $derived(receiptOrder && session.selectedStore ? customerReceipt(receiptOrder, session.selectedStore, receiptOpts, receiptCashPaid) : []);
   let cashPaid = $derived(parseInt(cashAmount) || 0);
-  let change = $derived(cashPaid - totalDue);
+  let change = $derived(cashPaid - payTotal);
 
   let discounts = $state<Discount[]>([]);
   let discountModalOpen = $state(false);
@@ -170,12 +185,33 @@
   let autoDiscounts = $derived(discounts.filter((d) => d.is_automatic && d.is_active));
   let codeDiscounts = $derived(discounts.filter((d) => !d.is_automatic && d.is_active && !!d.code));
 
-  function cashAppend(digits: string) {
-    cashAmount = cashAmount === '0' ? digits : cashAmount + digits;
+  // payment tiles follow the store's payment settings: one per method, or per EDC bank / QRIS provider
+  const WALLET_LOGOS: Record<string, string> = { gopay: 'gopay.svg', ovo: 'Logo_ovo_purple.svg', dana: 'Logo_dana_blue.svg', shopeepay: 'Shopee.svg' };
+  type PayTile = { key: string; method: PaymentMethod; provider: string; label: string; icon: string; logo: string | null };
+  let payTiles = $derived.by(() => {
+    const out: PayTile[] = [];
+    for (const method of payments.map((p) => p.value)) {
+      const names = providersFor(payOpts, method);
+      const icon = method === 'CASH' ? 'payments' : method === 'CARD' ? 'contactless' : method === 'QRIS' ? 'qr_code_2' : 'account_balance';
+      if (!names.length) out.push({ key: method, method, provider: '', label: paymentLabel(method), icon, logo: method === 'QRIS' ? 'Logo_QRIS.svg' : null });
+      else for (const name of names) out.push({ key: `${method}:${name}`, method, provider: name, label: method === 'CARD' ? `EDC ${name}` : name, icon, logo: method === 'QRIS' ? (WALLET_LOGOS[name.toLowerCase().replace(/\s/g, '')] ?? 'Logo_QRIS.svg') : null });
+    }
+    return out;
+  });
+  function pickPayTile(t: PayTile) {
+    paymentMethod = t.method;
+    paymentProvider = t.provider;
   }
-  function cashBackspace() {
-    cashAmount = cashAmount.length <= 1 ? '0' : cashAmount.slice(0, -1);
+  function onCashInput(e: Event & { currentTarget: HTMLInputElement }) {
+    const digits = e.currentTarget.value.replace(/\D/g, '');
+    cashAmount = digits ? String(parseInt(digits, 10)) : '0';
+    e.currentTarget.value = cashPaid > 0 ? cashPaid.toLocaleString('id-ID') : '';
   }
+  let quickCash = $derived.by(() => {
+    const ups = [payTotal, ...[10000, 50000, 100000].map((u) => Math.ceil(payTotal / u) * u)];
+    return [...new Set(ups)].filter((v) => v >= payTotal).slice(0, 4);
+  });
+
 
   function discountSummary(d: Discount): string {
     if (d.discount_type === 'PERCENTAGE') {
@@ -190,20 +226,22 @@
   function handleCharge() {
     if (onlineMode) {
       void checkout();
-    } else if (paymentMethod === 'CASH') {
-      cashAmount = '0';
-      mobileCartOpen = false;
-      cashModalOpen = true;
     } else {
-      void checkout();
+      payTarget = null;
+      cashAmount = String(totalDue);
+      mobileCartOpen = false;
+      payModalOpen = true;
     }
   }
   let totalItems = $derived(cart.reduce((sum, line) => sum + line.quantity, 0));
   let activeCategoryName = $derived(activeCategoryId === 'all' ? language.t('allMenu') : categories.find((category) => category.id === activeCategoryId)?.name ?? language.t('menu'));
-  let modifierUnitPrice = $derived(modifierItem ? itemPrice(modifierItem) + addonTotal(modifierItem, selectedAddonChoiceIds) : 0);
+  let modifierUnitPrice = $derived(modifierItem ? itemPrice(modifierItem) + addonTotal(modifierItem, selectedAddonChoiceIds, Object.values(selectedOptionChoiceIds)) : 0);
   let canAddModifierItem = $derived(
     modifierItem
-      ? (modifierItem.option_groups ?? []).every((group) => !group.required || Boolean(selectedOptionChoiceIds[group.id]))
+      ? (modifierItem.option_groups ?? []).every((group) => !(group.is_required ?? group.required) || Boolean(selectedOptionChoiceIds[group.id])) &&
+        (modifierItem.addon_groups ?? []).every(
+          (group) => !(group.is_required || (group.min_select ?? 0) > 0) || getGroupChoices(group).some((c) => selectedAddonChoiceIds.includes(c.id))
+        )
       : false
   );
 
@@ -223,18 +261,32 @@
       discounts = paginatedItems(discountsRes);
       channelSettings = await api.get<ChannelSetting[]>(`/stores/${storeId}/channels`).catch(() => []);
       if (onlineMode && !enabledChannels.length) setOnline(false);
+      void loadOpenBills();
     } catch (err) { error = err instanceof Error ? err.message : language.t('error'); }
     finally { loading = false; }
   }
+
+  /** After a sale only the catalog (stock) changes; categories, discounts and platforms stay as loaded. */
+  async function refreshItems() {
+    const storeId = session.selectedStore?.id;
+    if (!storeId) return;
+    try {
+      items = paginatedItems(await api.get<PaginatedResponse<Item>>(`/stores/${storeId}/items?limit=1000&is_sold=true`));
+    } catch { /* the next full load will retry */ }
+  }
+
+  const snapNames = (l: NonNullable<Order['items']>[number]) =>
+    [...(l.options_snapshot ?? []), ...(l.addons_snapshot ?? [])].map((m) => (m as { label?: string }).label).filter(Boolean).join(', ');
 
   function sameChoices(left: string[], right: string[]) {
     return left.length === right.length && [...left].sort().every((value, index) => value === [...right].sort()[index]);
   }
 
-  function lineFor(item: Item, optionChoiceIds: string[] = [], addonChoiceIds: string[] = []) {
+  function lineFor(item: Item, optionChoiceIds: string[] = [], addonChoiceIds: string[] = [], note = '') {
     return cart.find(
       (line) =>
         line.item.id === item.id &&
+        line.note.trim() === note.trim() &&
         sameChoices(line.optionChoiceIds, optionChoiceIds) &&
         sameChoices(line.addonChoiceIds, addonChoiceIds)
     );
@@ -245,7 +297,7 @@
   }
 
   function getLineUnitPrice(line: CartLine) {
-    return itemPrice(line.item) + addonTotal(line.item, line.addonChoiceIds);
+    return itemPrice(line.item) + addonTotal(line.item, line.addonChoiceIds, line.optionChoiceIds);
   }
 
   function addItem(item: Item) {
@@ -256,23 +308,33 @@
     addConfiguredItem(item, 1, [], []);
   }
 
-  function addConfiguredItem(item: Item, quantity: number, optionChoiceIds: string[], addonChoiceIds: string[]) {
+  function addConfiguredItem(item: Item, quantity: number, optionChoiceIds: string[], addonChoiceIds: string[], note = '') {
     if (item.stock !== null && item.stock !== undefined) {
       const remaining = item.stock - itemQuantity(item);
       if (remaining <= 0) return;
       quantity = Math.min(quantity, remaining);
     }
-    const existing = lineFor(item, optionChoiceIds, addonChoiceIds);
+    const existing = lineFor(item, optionChoiceIds, addonChoiceIds, note);
     if (existing) existing.quantity += quantity;
-    else cart.push({ lineId: Math.random().toString(36).slice(2), item, quantity, optionChoiceIds, addonChoiceIds });
+    else cart.push({ lineId: Math.random().toString(36).slice(2), item, quantity, optionChoiceIds, addonChoiceIds, note: note.trim() });
     schedulePromoCheck();
   }
 
   function openModifierModal(item: Item) {
     modifierItem = item;
     modifierQty = 1;
-    selectedOptionChoiceIds = {};
-    selectedAddonChoiceIds = [];
+    modifierNote = '';
+    modifierNoteOn = false;
+    // preselect the choices flagged as default
+    selectedOptionChoiceIds = Object.fromEntries(
+      (item.option_groups ?? []).flatMap((g) => {
+        const choices = getGroupChoices(g);
+        // a required group starts with its default, or its first choice
+        const d = choices.find((c) => c.is_default) ?? ((g.is_required ?? g.required) ? choices[0] : undefined);
+        return d ? [[g.id, d.id]] : [];
+      })
+    );
+    selectedAddonChoiceIds = (item.addon_groups ?? []).flatMap((g) => getGroupChoices(g).filter((c) => c.is_default).map((c) => c.id));
   }
 
   function closeModifierModal() {
@@ -280,14 +342,23 @@
   }
 
   function toggleAddon(choiceId: string) {
-    selectedAddonChoiceIds = selectedAddonChoiceIds.includes(choiceId)
-      ? selectedAddonChoiceIds.filter((id) => id !== choiceId)
-      : [...selectedAddonChoiceIds, choiceId];
+    if (selectedAddonChoiceIds.includes(choiceId)) {
+      selectedAddonChoiceIds = selectedAddonChoiceIds.filter((id) => id !== choiceId);
+      return;
+    }
+    const group = modifierItem?.addon_groups?.find((g) => getGroupChoices(g).some((c) => c.id === choiceId));
+    const max = group?.max_select;
+    if (group && max) {
+      const picked = getGroupChoices(group).filter((c) => selectedAddonChoiceIds.includes(c.id));
+      // at the limit: swap out the oldest pick of the group
+      if (picked.length >= max) selectedAddonChoiceIds = selectedAddonChoiceIds.filter((id) => id !== picked[0].id);
+    }
+    selectedAddonChoiceIds = [...selectedAddonChoiceIds, choiceId];
   }
 
   function addModifierItemToCart() {
     if (!modifierItem || !canAddModifierItem) return;
-    addConfiguredItem(modifierItem, modifierQty, Object.values(selectedOptionChoiceIds), selectedAddonChoiceIds);
+    addConfiguredItem(modifierItem, modifierQty, Object.values(selectedOptionChoiceIds), selectedAddonChoiceIds, modifierNoteOn ? modifierNote : '');
     closeModifierModal();
   }
 
@@ -308,12 +379,226 @@
   }
 
 
+
+  // ── Open bills (saved unpaid, paid later) ─────────────────
+  let openBills = $state<Order[]>([]);
+  let openBillTotal = $state(0);
+  let openBillModal = $state(false);
+  let openBillQuery = $state('');
+  let openBillTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function loadOpenBills() {
+    const storeId = session.selectedStore?.id;
+    if (!storeId) return;
+    try {
+      const q = new URLSearchParams({ status: 'OPEN', limit: '50' });
+      if (openBillQuery.trim()) q.set('search', openBillQuery.trim());
+      const res = await api.get<PaginatedResponse<Order>>(`/stores/${storeId}/orders?${q}`);
+      openBills = paginatedItems(res);
+      openBillTotal = res.total;
+    } catch { /* the badge is informational */ }
+  }
+
+  function searchOpenBills() {
+    clearTimeout(openBillTimer);
+    openBillTimer = setTimeout(() => void loadOpenBills(), 350);
+  }
+
+  function openBillList() {
+    openBillQuery = '';
+    openBillModal = true;
+    void loadOpenBills();
+  }
+
+  function payOpenBill(order: Order) {
+    payTarget = order;
+    cashAmount = String(order.total_amount);
+    paymentMethod = payments[0]?.value ?? 'CASH';
+    openBillModal = false;
+    mobileCartOpen = false;
+    error = '';
+    payModalOpen = true;
+  }
+
+  function closePay() {
+    payModalOpen = false;
+    payTarget = null;
+    error = '';
+  }
+
+  // open bill being extended with more items (earlier lines stay as sent to the kitchen)
+  let addTo = $state<Order | null>(null);
+  let addNet = $derived(addTo ? addTo.total_amount - (addTo.service_amount ?? 0) - (addTo.pb1_amount ?? 0) + subtotal : 0);
+  let addService = $derived(addTo?.order_type === 'DINE_IN' ? feeRound(addNet, session.selectedStore?.service_bp ?? 0) : 0);
+  let addPb1 = $derived(addTo ? feeRound(addNet + addService, session.selectedStore?.pb1_bp ?? 0) : 0);
+  let addTotal = $derived(addNet + addService + addPb1);
+
+  // void a line of the open bill being extended (Owner / Manager)
+  const VOID_REASONS = ['Salah input', 'Pelanggan komplain', 'Item habis', 'Lain-lain'];
+  let canVoid = $derived(['OWNER', 'MANAGER'].includes(session.selectedStore?.role ?? ''));
+  let voidLine = $state<NonNullable<Order['items']>[number] | null>(null);
+  let voidQty = $state(1);
+  let voidReason = $state('');
+  let voidSaving = $state(false);
+  let voidError = $state('');
+  const unitsLeft = (l: NonNullable<Order['items']>[number]) => l.quantity - (l.void_qty ?? 0);
+  let billUnits = $derived((addTo?.items ?? []).reduce((n, l) => n + unitsLeft(l), 0));
+
+  function openVoid(line: NonNullable<Order['items']>[number]) {
+    voidLine = line;
+    voidQty = 1;
+    voidReason = '';
+    voidError = '';
+  }
+
+  async function submitVoid() {
+    const storeId = session.selectedStore?.id;
+    if (!storeId || !addTo || !voidLine || !voidReason) return;
+    voidSaving = true;
+    voidError = '';
+    try {
+      const order = await api.post<Order>(`/stores/${storeId}/orders/${addTo.id}/items/${voidLine.id}/void`, { quantity: voidQty, reason: voidReason });
+      addTo = order;
+      voidLine = null;
+      showToast(language.t('obVoided'));
+      await Promise.all([refreshItems(), loadOpenBills()]);
+    } catch (err) {
+      voidError = err instanceof Error ? err.message : language.t('error');
+    } finally {
+      voidSaving = false;
+    }
+  }
+
+  function startAddTo(order: Order) {
+    addTo = order;
+    orderType = (order.order_type as typeof orderType) ?? null;
+    posTableNumber = order.table_number ?? null;
+    customerName = order.customer_name ?? '';
+    guestCount = order.guest_count ?? 1;
+    segment = order.segment ?? '';
+    discountCode = '';
+    appliedDiscountLabel = '';
+    promoResult = null;
+    openBillModal = false;
+    error = '';
+  }
+
+  function cancelAdd() {
+    addTo = null;
+    resetOrderMeta();
+  }
+
+  async function saveAdd() {
+    const storeId = session.selectedStore?.id;
+    if (!storeId || !addTo || cart.length === 0) return;
+    checkingOut = true;
+    error = '';
+    try {
+      const order = await api.post<Order>(`/stores/${storeId}/orders/${addTo.id}/items`, {
+        items: cart.map((line) => ({
+          item_id: line.item.id,
+          quantity: line.quantity,
+          selected_option_choice_ids: line.optionChoiceIds,
+          selected_addon_choice_ids: line.addonChoiceIds,
+          note: line.note.trim() || null
+        })),
+        table_number: posTableEnabled ? posTableNumber : null,
+        customer_name: posCustomerNameEnabled && customerName ? customerName : null,
+        guest_count: guestCount,
+        segment: segment || null
+      });
+      cart = [];
+      addTo = null;
+      resetOrderMeta();
+      mobileCartOpen = false;
+      showToast(`${language.t('obAdded')} · ${order.order_number}`);
+      await Promise.all([refreshItems(), loadOpenBills()]);
+    } catch (err) {
+      error = err instanceof Error ? err.message : language.t('error');
+    } finally {
+      checkingOut = false;
+    }
+  }
+
+  async function saveOpenBill() {
+    const storeId = session.selectedStore?.id;
+    if (!storeId || cart.length === 0 || onlineMode) return;
+    checkingOut = true;
+    error = '';
+    try {
+      const order = await api.post<Order>(`/stores/${storeId}/orders`, toOrderPayload({
+        openBill: true,
+        discountCode,
+        items: cart.map((line) => ({
+          itemId: line.item.id,
+          quantity: line.quantity,
+          optionChoiceIds: line.optionChoiceIds,
+          addonChoiceIds: line.addonChoiceIds,
+          note: line.note
+        })),
+        orderType: posDineInEnabled ? orderType : null,
+        tableNumber: posTableEnabled ? posTableNumber : null,
+        customerName: posCustomerNameEnabled && customerName ? customerName : null,
+        guestCount,
+        segment
+      }));
+      cart = [];
+      discountCode = '';
+      appliedDiscountLabel = '';
+      promoResult = null;
+      resetOrderMeta();
+      mobileCartOpen = false;
+      showToast(`${language.t('obSaved')} · ${order.order_number}`);
+      await Promise.all([refreshItems(), loadOpenBills()]);
+    } catch (err) {
+      error = err instanceof Error ? err.message : language.t('error');
+    } finally {
+      checkingOut = false;
+    }
+  }
+
+  async function confirmPay() {
+    if (!payTarget) return checkout();
+    const storeId = session.selectedStore?.id;
+    if (!storeId) return;
+    checkingOut = true;
+    error = '';
+    try {
+      const order = await api.post<Order>(`/stores/${storeId}/orders/${payTarget.id}/pay`, {
+        payment_method: paymentMethod,
+        payment_provider: providers.length ? paymentProvider : null,
+        cash_received: paymentMethod === 'CASH' && cashPaid >= payTotal ? cashPaid : null
+      });
+      receiptCashPaid = paymentMethod === 'CASH' ? cashPaid : 0;
+      payModalOpen = false;
+      payTarget = null;
+      cashAmount = '0';
+      receiptOrder = order;
+      await loadOpenBills();
+    } catch (err) {
+      error = err instanceof Error ? err.message : language.t('error');
+    } finally {
+      checkingOut = false;
+    }
+  }
+
+  // /pos?pay=<order id> (from Transactions) opens that bill's payment
+  let payQueryDone = false;
+  $effect(() => {
+    const id = $page.url.searchParams.get('pay');
+    const storeId = session.selectedStore?.id;
+    if (!id || !storeId || payQueryDone) return;
+    payQueryDone = true;
+    void api.get<Order>(`/stores/${storeId}/orders/${id}`).then((o) => { if (o.status === 'OPEN') payOpenBill(o); }).catch(() => {});
+  });
+
   function cartItemsPayload() {
     return cart.map((line) => ({
       item_id: line.item.id,
       quantity: line.quantity,
       selected_option_choice_ids: line.optionChoiceIds,
-      selected_addon_choice_ids: line.addonChoiceIds
+      selected_addon_choice_ids: line.addonChoiceIds,
+      note: line.note.trim() || null
     }));
   }
 
@@ -362,7 +647,7 @@
 
   function schedulePromoCheck() {
     if (autoPromoTimer !== null) clearTimeout(autoPromoTimer);
-    if (onlineMode) { promoResult = null; return; }
+    if (onlineMode || addTo) { promoResult = null; return; }
     if (cart.length === 0) { promoResult = null; return; }
     autoPromoTimer = setTimeout(() => {
       if (discountCode) void checkPromo();
@@ -414,10 +699,13 @@
           itemId: line.item.id,
           quantity: line.quantity,
           optionChoiceIds: line.optionChoiceIds,
-          addonChoiceIds: line.addonChoiceIds
+          addonChoiceIds: line.addonChoiceIds,
+          note: line.note
         })),
         orderType: posDineInEnabled && !online ? orderType : null,
         tableNumber: posTableEnabled && !online ? posTableNumber : null,
+        guestCount: online ? null : guestCount,
+        segment: online ? null : segment,
         customerName: online ? onlineCustomer.trim() : posCustomerNameEnabled && customerName ? customerName : null,
         cashReceived: !online && paymentMethod === 'CASH' && cashPaid >= totalDue ? cashPaid : null
       }));
@@ -429,10 +717,10 @@
       resetOnlineForm();
       receiptCashPaid = paymentMethod === 'CASH' ? cashPaid : 0;
       cashAmount = '0';
-      cashModalOpen = false;
+      payModalOpen = false;
       receiptOrder = order;
       mobileCartOpen = false;
-      await load();
+      await refreshItems();
     } catch (err) { error = err instanceof Error ? err.message : 'Checkout failed'; }
     finally { checkingOut = false; }
   }
@@ -471,11 +759,28 @@
   let posTableNumber = $state<string | null>(null);
   let customerName = $state('');
   let tableModalOpen = $state(false);
+  let guestCount = $state(1);
+  let segment = $state('');
+  let detailOpen = $state(false);
+  let noteOpenId = $state<string | null>(null);
+  const focusEl = (node: HTMLElement) => node.focus();
+  let whereStr = $derived(
+    [
+      orderType === 'DINE_IN' ? language.t('dineIn') : orderType === 'TAKE_AWAY' ? language.t('takeAway') : '',
+      posTableNumber ? `${language.t('table')} ${posTableNumber}` : '',
+      customerName,
+      `${guestCount} ${language.t('guestCount').toLowerCase()}`
+    ].filter(Boolean).join(' · ')
+  );  const SEGMENTS = ['FAM', 'GENZ', 'GENM', 'GENA', 'OFFC', 'CPL'] as const;
+  const segLabel = (code: string) => language.t(`seg${code}` as 'segFAM');
 
   function resetOrderMeta() {
     orderType = null;
     posTableNumber = null;
     customerName = '';
+    guestCount = 1;
+    segment = '';
+    detailOpen = false;
   }
 
   let mobileCartOpen = $state(false);
@@ -500,72 +805,158 @@
 
 <svelte:head><title>{language.t('pos')} | Kasir</title></svelte:head>
 
-<!-- Cash payment modal -->
-{#if cashModalOpen}
-  <div
-    class="sheet-backdrop cash-backdrop"
-    role="presentation"
-    onclick={(e) => { if (e.target === e.currentTarget) cashModalOpen = false; }}
-  >
-    <section class="cash-modal" role="dialog" aria-modal="true">
-      <div class="cash-modal-header">
-        <button class="icon-btn" onclick={() => cashModalOpen = false}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
-        <div style="text-align: right;">
-          <div class="cash-modal-label">{language.t('payment')} CASH</div>
-          <div class="cash-modal-total">{formatRupiah(totalDue)}</div>
-          {#if promoResult?.valid && promoResult.discount_amount > 0}
-            <div class="cash-modal-subtotal-note">{language.t('discountSavings')} {formatRupiah(promoResult.discount_amount)}</div>
+<!-- Payment modal -->
+{#if payModalOpen}
+  <div class="sheet-backdrop cash-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) closePay(); }}>
+    <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+    <section class="pay-modal" role="dialog" aria-modal="true" aria-label={language.t('payMethod')}>
+      <div class="pay-sum">
+        <div class="pay-sum-head">{language.t('order')}</div>
+        <div>
+          <div class="pay-sum-lbl">{language.t('payBillTotal')}</div>
+          <div class="pay-sum-total">{formatRupiah(payTotal)}</div>
+          {#if !payTarget && promoResult?.valid && promoResult.discount_amount > 0}
+            <div class="pay-sum-save">{language.t('discountSavings')} {formatRupiah(promoResult.discount_amount)}</div>
           {/if}
         </div>
+        <div class="pay-sum-items">
+          {#if payTarget}
+            {#each payTarget.items ?? [] as l (l.id)}
+              <div class="pay-sum-line">
+                <span class="pay-sum-qty">{l.quantity}×</span>
+                <div class="min-w-0 flex-1">
+                  <div>{l.item_name_snapshot}</div>
+                  {#if snapNames(l) || l.note}<div class="pay-sum-sub">{[snapNames(l), l.note ? `“${l.note}”` : ''].filter(Boolean).join(' · ')}</div>{/if}
+                </div>
+              </div>
+            {/each}
+          {:else}
+          {#each cart as l (l.lineId)}
+            <div class="pay-sum-line">
+              <span class="pay-sum-qty">{l.quantity}×</span>
+              <div class="min-w-0 flex-1">
+                <div>{l.item.name}</div>
+                {#if choiceNames(l) || l.note}<div class="pay-sum-sub">{[choiceNames(l), l.note ? `“${l.note}”` : ''].filter(Boolean).join(' · ')}</div>{/if}
+              </div>
+            </div>
+          {/each}
+          {/if}
+        </div>
+        <div class="pay-sum-sub">{payTarget ? [payTarget.order_number, payTarget.table_number ? `${language.t('table')} ${payTarget.table_number}` : '', payTarget.customer_name ?? ''].filter(Boolean).join(' · ') : whereStr}</div>
       </div>
-
-      <div class="cash-display">
-        <button class="calc-back-btn" onclick={() => cashAmount = '0'} aria-label={language.t('clear')}>
-          <span class="ms !text-[16px]" aria-hidden="true">undo</span>
-        </button>
-        <div style="text-align: right;">
-          <div class="cash-lbl">{language.t('amountPaid')}</div>
-          <div class="cash-val">{formatRupiah(cashPaid)}</div>
+      <div class="pay-main">
+        <div class="flex items-center justify-between">
+          <span class="text-base font-semibold">{language.t('payMethod')}</span>
+          <button class="icon-btn" onclick={closePay} aria-label={language.t('close')}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
         </div>
-      </div>
-
-      <div class="calc-grid">
-        {#each [1,2,3,4,5,6,7,8,9] as d}
-          <button class="calc-key" onclick={() => cashAppend(String(d))}>{d}</button>
-        {/each}
-        <button class="calc-key" onclick={() => cashAppend('0')}>0</button>
-        <button class="calc-key" onclick={() => cashAppend('000')}>000</button>
-        <button class="calc-key calc-key--clear" onclick={cashBackspace} aria-label="backspace">⌫</button>
-      </div>
-
-      {#if cashPaid >= totalDue && cashPaid > 0}
-        <div class="cash-change cash-change--ok">
-          <span>{language.t('change')}</span>
-          <span>{formatRupiah(change)}</span>
+        <div class="pay-tiles" role="radiogroup" aria-label={language.t('payMethod')}>
+          {#each payTiles as t (t.key)}
+            {@const active = paymentMethod === t.method && (paymentProvider === t.provider || !t.provider)}
+            <button type="button" role="radio" aria-checked={active} class="pay-tile {active ? 'pay-tile--active' : ''}" onclick={() => pickPayTile(t)}>
+              <span class="pay-tile-icon">
+                {#if t.logo}<img src="/images/pay/{t.logo}" alt="" />{:else}<span class="ms" aria-hidden="true">{t.icon}</span>{/if}
+              </span>
+              <span class="pay-tile-lbl">{t.label}</span>
+            </button>
+          {/each}
         </div>
-      {:else if cashPaid > 0}
-        <div class="cash-change cash-change--short">
-          <span>{language.t('short')}</span>
-          <span>{formatRupiah(totalDue - cashPaid)}</span>
+        <div class="pay-panel">
+          {#if paymentMethod === 'CASH'}
+            <label class="block">
+              <span class="pay-panel-lbl">{language.t('cashReceived')}</span>
+              <span class="pay-cash-input"><span>Rp</span><input type="text" inputmode="numeric" value={cashPaid > 0 ? cashPaid.toLocaleString('id-ID') : ''} oninput={onCashInput} /></span>
+            </label>
+            <div class="flex flex-wrap gap-2">
+              {#each quickCash as q (q)}
+                <button class="pay-quick" onclick={() => (cashAmount = String(q))}>{q === payTotal ? language.t('exactAmount') : formatRupiah(q)}</button>
+              {/each}
+            </div>
+            <div class="pay-change">
+              <span>{cashPaid >= payTotal ? language.t('change') : language.t('short')}</span>
+              <span class={cashPaid >= payTotal ? 'text-[var(--om-brand)]' : 'text-red-700'}>{formatRupiah(Math.abs(change))}</span>
+            </div>
+          {:else if paymentMethod === 'CARD'}
+            <div class="pay-hint"><span class="ms !text-[56px]" aria-hidden="true">contactless</span><strong>{language.t('payEdcTitle')}</strong><span>{language.t('payEdcHint')}{paymentProvider ? ` · ${paymentProvider}` : ''}</span></div>
+          {:else if paymentMethod === 'QRIS'}
+            <div class="pay-hint"><span class="ms !text-[56px]" aria-hidden="true">qr_code_2</span><strong>{language.t('payQrTitle')}{paymentProvider ? ` ${paymentProvider}` : ''}</strong><span>{formatRupiah(payTotal)}</span></div>
+          {:else}
+            <div class="pay-hint"><span class="ms !text-[56px]" aria-hidden="true">account_balance</span><strong>{language.t('payTransferTitle')}</strong><span>{language.t('payTransferHint')}</span></div>
+          {/if}
         </div>
-      {:else}
-        <div class="cash-change cash-change--hint">
-          <span>{language.t('enterCashAmount')}</span>
-        </div>
-      {/if}
-
-      <div class="cash-modal-footer">
-        <button
-          class="charge-btn cash-confirm-btn"
-          disabled={cashPaid < totalDue || checkingOut}
-          onclick={checkout}
-        >
-          {checkingOut ? language.t('processing') : language.t('confirm')}
+        {#if error}<div class="menu-error" role="alert">{error}</div>{/if}
+        <button class="charge-btn" disabled={checkingOut || (paymentMethod === 'CASH' && cashPaid < payTotal)} onclick={confirmPay}>
+          {checkingOut ? language.t('processing') : `${language.t('confirm')} · ${formatRupiah(payTotal)}`}
         </button>
       </div>
     </section>
   </div>
 {/if}
+
+<!-- Void a line of the open bill -->
+{#if voidLine}
+  <div class="sheet-backdrop cash-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) voidLine = null; }}>
+    <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+    <section class="void-modal" role="dialog" aria-modal="true" aria-label={language.t('txVoidItem')}>
+      <div class="flex items-center gap-3">
+        <div class="min-w-0 flex-1">
+          <div class="text-base font-semibold">{language.t('txVoidItem')}</div>
+          <div class="truncate text-sm text-[var(--text-muted)]">{voidLine.item_name_snapshot}</div>
+        </div>
+        <button class="icon-btn" onclick={() => (voidLine = null)} aria-label={language.t('close')}><span class="ms !text-[20px]" aria-hidden="true">close</span></button>
+      </div>
+      {#if voidError}<div class="menu-error" role="alert">{voidError}</div>{/if}
+      <div>
+        <div class="group-label">{language.t('txVoidQty')}</div>
+        <div class="qty-stepper mt-1 w-fit">
+          <button class="step-btn" disabled={voidQty <= 1} onclick={() => (voidQty -= 1)}>−</button>
+          <span class="step-num">{voidQty}</span>
+          <button class="step-btn" disabled={voidQty >= Math.min(unitsLeft(voidLine), billUnits - 1)} onclick={() => (voidQty += 1)}>+</button>
+        </div>
+      </div>
+      <div>
+        <div class="group-label">{language.t('txReason')}</div>
+        <div class="mt-1 flex flex-wrap gap-1.5">
+          {#each VOID_REASONS as r (r)}<button class="choice-btn {voidReason === r ? 'choice-btn--active' : ''}" aria-pressed={voidReason === r} onclick={() => (voidReason = r)}>{r}</button>{/each}
+        </div>
+      </div>
+      <button class="charge-btn" disabled={!voidReason || voidSaving} onclick={submitVoid}>{voidSaving ? language.t('saving') : language.t('txVoidItem')}</button>
+    </section>
+  </div>
+{/if}
+
+<!-- Open bills -->
+{#if openBillModal}
+  <div class="sheet-backdrop cash-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) openBillModal = false; }}>
+    <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+    <section class="ob-modal" role="dialog" aria-modal="true" aria-label={language.t('obTitle')}>
+      <div class="ob-head">
+        <div class="min-w-0 flex-1">
+          <div class="text-base font-semibold">{language.t('obTitle')}</div>
+          <div class="text-xs text-[var(--text-muted)]">{openBillTotal} · {formatRupiah(openBills.reduce((s, o) => s + o.total_amount, 0))}</div>
+        </div>
+        <button class="icon-btn" onclick={() => (openBillModal = false)} aria-label={language.t('close')}><span class="ms !text-[20px]" aria-hidden="true">close</span></button>
+      </div>
+      <label class="ob-search"><span class="ms !text-[20px]" aria-hidden="true">search</span><input placeholder={language.t('obSearch')} bind:value={openBillQuery} oninput={searchOpenBills} /></label>
+      <div class="ob-list">
+        {#each openBills as b (b.id)}
+          <div class="ob-row">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-baseline gap-2"><span class="font-semibold whitespace-nowrap">{(b.order_number ?? '').split('-').slice(-1)[0]}</span><span class="truncate">{b.customer_name || language.t('obWalkIn')}</span></div>
+              <div class="text-xs text-[var(--text-muted)]">{[b.table_number ? `${language.t('table')} ${b.table_number}` : '', b.guest_count ? `${b.guest_count} ${language.t('guestCount').toLowerCase()}` : '', formatDateTime(b.created_at)].filter(Boolean).join(' · ')}</div>
+            </div>
+            <span class="font-bold tabular-nums whitespace-nowrap">{formatRupiah(b.total_amount)}</span>
+            <button class="ob-add" onclick={() => startAddTo(b)}>{language.t('obAdd')}</button>
+            <button class="ob-pay" onclick={() => payOpenBill(b)}>{language.t('obPay')}</button>
+          </div>
+        {:else}
+          <div class="ob-empty"><span class="ms !text-[32px]" aria-hidden="true">task_alt</span><strong>{language.t('obEmpty')}</strong><span>{language.t('obEmptyHint')}</span></div>
+        {/each}
+      </div>
+    </section>
+  </div>
+{/if}
+
+{#if toast}<div class="pos-toast" role="status">{toast}</div>{/if}
 
 <!-- Table picker modal -->
 {#if tableModalOpen}
@@ -604,13 +995,13 @@
 {/if}
 
 {#snippet typeTabs()}
-  <div class="flex flex-wrap gap-1.5">
+  <div class="type-seg">
     {#if posDineInEnabled}
-      <button class="meta-type-btn {!onlineMode && orderType === 'DINE_IN' ? 'meta-type-btn--active' : ''}" onclick={() => pickType('DINE_IN')}>{language.t('dineIn')}</button>
-      <button class="meta-type-btn {!onlineMode && orderType === 'TAKE_AWAY' ? 'meta-type-btn--active' : ''}" onclick={() => pickType('TAKE_AWAY')}>{language.t('takeAway')}</button>
+      <button class="type-btn {!onlineMode && orderType === 'DINE_IN' ? 'type-btn--active' : ''}" onclick={() => pickType('DINE_IN')}>{language.t('dineIn')}</button>
+      <button class="type-btn {!onlineMode && orderType === 'TAKE_AWAY' ? 'type-btn--active' : ''}" onclick={() => pickType('TAKE_AWAY')}>{language.t('takeAway')}</button>
     {/if}
     {#if hasOnline}
-      <button class="meta-type-btn {onlineMode ? 'meta-type-btn--active' : ''}" onclick={() => setOnline(!onlineMode)}>{language.t('online')}</button>
+      <button class="type-btn {onlineMode ? 'type-btn--active' : ''}" onclick={() => setOnline(!onlineMode)}>{language.t('online')}</button>
     {/if}
   </div>
 {/snippet}
@@ -660,6 +1051,199 @@
       {/if}
     </div>
   {/if}
+{/snippet}
+
+{#snippet cartLines()}
+  {#each cart as line (line.lineId)}
+    {@const atLimit = line.item.stock !== null && line.item.stock !== undefined && line.quantity >= line.item.stock}
+    <div class="cart-line">
+      <div class="cart-line-body" role="button" tabindex="0" title={language.t('lineNote')} onclick={() => (noteOpenId = noteOpenId === line.lineId ? null : line.lineId)} onkeydown={(e) => { if (e.key === 'Enter') noteOpenId = noteOpenId === line.lineId ? null : line.lineId; }}>
+        <div class="cart-line-name">{line.item.name}</div>
+        {#if choiceNames(line)}<div class="cart-line-mods">{choiceNames(line)}</div>{/if}
+        {#if line.note && noteOpenId !== line.lineId}<div class="cart-line-note">“{line.note}”</div>{/if}
+        {#if noteOpenId === line.lineId}
+          <input
+            class="field mt-1 py-1.5 text-sm"
+            maxlength="200"
+            placeholder={language.t('lineNotePlaceholder')}
+            aria-label={language.t('lineNote')}
+            bind:value={line.note}
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => { if (e.key === 'Enter') noteOpenId = null; }}
+            onblur={() => (noteOpenId = null)}
+            use:focusEl
+          />
+        {/if}
+        {#if atLimit}<div class="cart-line-limit">{language.t('maxStockReached')}</div>{/if}
+        {#if getLineUnitPrice(line) > 0}<div class="cart-line-price">{formatRupiah(getLineUnitPrice(line) * line.quantity)}</div>{/if}
+      </div>
+      <div class="qty-stepper">
+        <button class="step-btn" onclick={() => changeQty(line, -1)}>−</button>
+        <span class="step-num">{line.quantity}</span>
+        <button class="step-btn" disabled={atLimit} onclick={() => changeQty(line, 1)}>+</button>
+      </div>
+    </div>
+  {:else}
+    <div class="cart-empty">
+      <div class="cart-empty-icon">🧾</div>
+      <div>{language.t('cartEmpty')}</div>
+    </div>
+  {/each}
+{/snippet}
+
+{#snippet orderDetail()}
+  {#if !onlineMode}
+    <div class="detail-wrap">
+      <button class="detail-summary" aria-expanded={detailOpen} aria-label={language.t('orderDetail')} onclick={() => (detailOpen = !detailOpen)}>
+        <span class="detail-chips">
+          {#if posTableEnabled}
+            <span class="detail-chip {posTableNumber ? 'detail-chip--on' : ''}"><span class="ms !text-[16px]" aria-hidden="true">table_restaurant</span>{posTableNumber ? `${language.t('table')} ${posTableNumber}` : language.t('selectTable')}</span>
+          {/if}
+          {#if posCustomerNameEnabled}
+            <span class="detail-chip detail-chip--shrink"><span class="ms !text-[16px]" aria-hidden="true">person</span><span class="truncate">{customerName || language.t('customerNamePlaceholder').replace('...', '')}</span></span>
+          {/if}
+          <span class="detail-chip"><span class="ms !text-[16px]" aria-hidden="true">group</span>{guestCount}</span>
+          <span class="detail-chip detail-chip--shrink"><span class="ms !text-[16px]" aria-hidden="true">pie_chart</span><span class="truncate">{segment ? segLabel(segment) : language.t('segment')}</span></span>
+        </span>
+        <span class="ms" aria-hidden="true">{detailOpen ? 'expand_less' : 'expand_more'}</span>
+      </button>
+      {#if detailOpen}
+        <div class="detail-body">
+          {#if posTableEnabled || posCustomerNameEnabled}
+            <div class="detail-row">
+              {#if posTableEnabled}
+                <button class="detail-field" onclick={() => (tableModalOpen = true)}>
+                  <span class="ms !text-[20px]" aria-hidden="true">table_restaurant</span>
+                  <span class="flex-1 truncate text-left">{posTableNumber ? `${language.t('table')} ${posTableNumber}` : language.t('selectTable')}</span>
+                  {#if posTableNumber}<span class="meta-clear" role="button" tabindex="0" aria-label={language.t('removeTableSelection')} onclick={(e) => { e.stopPropagation(); posTableNumber = null; }} onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); posTableNumber = null; } }}>×</span>{/if}
+                </button>
+              {/if}
+              {#if posCustomerNameEnabled}
+                <label class="detail-field">
+                  <span class="ms !text-[20px]" aria-hidden="true">person</span>
+                  <input class="min-w-0 flex-1 bg-transparent outline-none" placeholder={language.t('customerNamePlaceholder')} bind:value={customerName} />
+                </label>
+              {/if}
+            </div>
+          {/if}
+          <div class="detail-row">
+            <div class="detail-field detail-field--stepper" role="group" aria-label={language.t('guestCount')}>
+              <button class="detail-step" aria-label="−" onclick={() => (guestCount = Math.max(1, guestCount - 1))}><span class="ms !text-[20px]" aria-hidden="true">remove</span></button>
+              <span class="flex items-center gap-1 font-medium"><span class="ms !text-[20px]" aria-hidden="true">group</span>{guestCount}</span>
+              <button class="detail-step" aria-label="+" onclick={() => (guestCount = Math.min(999, guestCount + 1))}><span class="ms !text-[20px]" aria-hidden="true">add</span></button>
+            </div>
+            <label class="detail-field relative">
+              <span class="ms !text-[20px]" aria-hidden="true">pie_chart</span>
+              <select class="min-w-0 flex-1 appearance-none bg-transparent pr-6 outline-none" aria-label={language.t('segment')} bind:value={segment}>
+                <option value="">{language.t('segmentPlaceholder')}</option>
+                {#each SEGMENTS as code (code)}<option value={code}>{code} · {segLabel(code)}</option>{/each}
+              </select>
+              <span class="ms pointer-events-none absolute right-2 !text-[20px]" aria-hidden="true">expand_more</span>
+            </label>
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet cartPanel(sheet: boolean)}
+  <div class="cart-header {sheet ? 'sheet-header' : ''}">
+    {#if sheet}<button class="icon-btn" onclick={() => (mobileCartOpen = false)} aria-label={language.t('close')}><span class="ms !text-[22px]" aria-hidden="true">arrow_back</span></button>{/if}
+    <h2 class="cart-title">{addTo ? `${language.t('obAddingTo')} #${(addTo.order_number ?? '').split('-').slice(-1)[0]}` : language.t('order')}</h2>
+    {#if totalItems > 0}<span class="cart-badge">{totalItems}</span>{/if}
+    <button class="ob-open" aria-label={language.t('obTitle')} title={language.t('obTitle')} onclick={openBillList}>
+      <span class="ms" aria-hidden="true">receipt_long</span>
+      {#if openBillTotal > 0}<span class="ob-open-badge">{openBillTotal}</span>{/if}
+    </button>
+  </div>
+  {#if (posDineInEnabled || hasOnline) && !addTo}<div class="cart-types">{@render typeTabs()}</div>{/if}
+  {@render orderDetail()}
+  <div class="cart-lines">
+    {@render onlineForm()}
+    {#if addTo}
+      {#each addTo.items ?? [] as l (l.id)}
+        <div class="cart-line cart-line--locked">
+          <span class="ms !text-[18px] text-[var(--text-muted)]" aria-hidden="true">lock</span>
+          <div class="cart-line-body">
+            <div class="cart-line-name {unitsLeft(l) <= 0 ? 'line-through' : ''}">{unitsLeft(l)}× {l.item_name_snapshot}{#if l.void_qty}<span class="ml-1.5 text-[12px] font-bold text-[var(--om-danger)]">{l.void_qty} {language.t('txVoided')}</span>{/if}</div>
+            {#if snapNames(l) || l.note}<div class="cart-line-mods">{[snapNames(l), l.note ? `“${l.note}”` : ''].filter(Boolean).join(' · ')}</div>{/if}
+          </div>
+          {#if canVoid && unitsLeft(l) > 0}
+            <button class="line-void" disabled={billUnits <= 1} title={billUnits <= 1 ? language.t('txVoidOpenLast') : language.t('txVoidItem')} aria-label={`${language.t('txVoidItem')} ${l.item_name_snapshot}`} onclick={() => openVoid(l)}>
+              <span class="ms !text-[16px]" aria-hidden="true">delete</span>{language.t('txVoid')}
+            </button>
+          {/if}
+        </div>
+      {/each}
+    {/if}
+    {@render cartLines()}
+  </div>
+  <div class="cart-footer">
+    {#if !onlineMode && !addTo}
+      <div class="discount-row">
+        {#if promoResult?.valid && promoResult.discount_amount > 0}
+          <div class="discount-chip">
+            <span class="ms !text-[13px] shrink-0" aria-hidden="true">sell</span>
+            <span class="discount-chip-label">
+              {appliedDiscountLabel || language.t('discounts')}
+              <span class="discount-chip-savings">· {language.t('discountSavings')} {formatRupiah(promoResult.discount_amount)}</span>
+            </span>
+            <button class="discount-chip-clear" onclick={clearAppliedDiscount} aria-label={language.t('discounts')}>×</button>
+          </div>
+        {:else if promoResult !== null && !promoResult.valid}
+          <div class="discount-err-row">
+            <button class="discount-trigger" onclick={() => (discountModalOpen = true)}>
+              <span class="ms !text-[13px]" aria-hidden="true">sell</span>
+              <span>{language.t('addDiscount')}</span>
+            </button>
+            <span class="discount-err-msg">{promoResult.message}</span>
+          </div>
+        {:else}
+          <button class="discount-trigger {promoLoading ? 'discount-trigger--loading' : ''}" onclick={() => (discountModalOpen = true)}>
+            <span class="ms !text-[13px]" aria-hidden="true">sell</span>
+            <span>{promoLoading ? language.t('checking') : language.t('addDiscount')}</span>
+          </button>
+        {/if}
+      </div>
+    {/if}
+    {#if addTo}
+      <div class="order-summary">
+        <div class="summary-row"><span>{language.t('obPrev')}</span><span>{formatRupiah(addTo.total_amount)}</span></div>
+        <div class="summary-row"><span>{language.t('obAddedSum')}</span><span>{formatRupiah(addTotal - addTo.total_amount)}</span></div>
+        <div class="summary-total"><span>{language.t('total')}</span><span>{formatRupiah(addTotal)}</span></div>
+      </div>
+    {:else}
+    <div class="order-summary">
+      <div class="summary-row"><span>{language.t('subtotal')}</span><span>{formatRupiah(subtotal)}</span></div>
+      {#if promoResult?.valid && promoResult.discount_amount > 0}
+        <div class="summary-row summary-row--discount">
+          <span>{language.t('discounts')} {appliedDiscountLabel ? `· ${appliedDiscountLabel}` : ''}</span>
+          <span>−{formatRupiah(promoResult.discount_amount)}</span>
+        </div>
+      {/if}
+      {#if serviceFee > 0}<div class="summary-row"><span>{language.t('serviceLabel')}</span><span>{formatRupiah(serviceFee)}</span></div>{/if}
+      {#if pb1Fee > 0}<div class="summary-row"><span>{language.t('pb1Label')}</span><span>{formatRupiah(pb1Fee)}</span></div>{/if}
+      <div class="summary-total"><span>{language.t('total')}</span><span>{formatRupiah(totalDue)}</span></div>
+    </div>
+    {/if}
+    {#if error && addTo}<div class="menu-error" role="alert">{error}</div>{/if}
+    {#if addTo}
+      <div class="footer-actions">
+        <button class="ob-save" onclick={cancelAdd}>{language.t('obCancelAdd')}</button>
+        <button class="charge-btn" disabled={cart.length === 0 || checkingOut} onclick={saveAdd}>{checkingOut ? language.t('processing') : `${language.t('obSaveAdd')} ${formatRupiah(addTotal - addTo.total_amount)}`}</button>
+      </div>
+    {:else}
+    <div class="footer-actions">
+      {#if !onlineMode}
+        <button class="ob-save" disabled={cart.length === 0 || checkingOut} onclick={saveOpenBill}><span class="ms !text-[20px]" aria-hidden="true">receipt_long</span>{language.t('obSave')}</button>
+      {/if}
+      <button class="charge-btn" disabled={cart.length === 0 || checkingOut || (onlineMode && !onlineValid)} onclick={handleCharge}>
+        {checkingOut ? language.t('processing') : `${language.t(onlineMode ? 'onlineSend' : 'charge')} ${formatRupiah(totalDue)}`}
+      </button>
+    </div>
+    {/if}
+  </div>
 {/snippet}
 
 <div class="pos-shell">
@@ -720,31 +1304,22 @@
               {#if item.icon}
                 <div class="item-emoji">{item.icon}</div>
               {:else}
-                <img
-                  src={mediaUrl(item.image_url) ?? '/images/product-placeholder.svg'}
-                  alt={item.name}
-                  class="item-img {item.image_url ? 'object-cover' : 'object-contain p-6'}"
-                />
-              {/if}
-              {#if oos}
-                <div class="item-oos-overlay">
-                  <span class="oos-badge">{language.t('stockOut')}</span>
-                </div>
-              {:else}
-                {#if qty}
-                  <span class="qty-badge">{qty}</span>
-                {/if}
-                {#if tracked}
-                  <span class="stock-badge">{language.t('stockRemaining')} {item.stock}</span>
+                {#if item.image_url}
+                  <img src={mediaUrl(item.image_url)} alt={item.name} class="item-img object-cover" />
+                {:else}
+                  <div class="img-placeholder" aria-hidden="true"><CupcakeIcon size={110} /></div>
                 {/if}
               {/if}
-              {#if hasItemModifiers(item)}
-                <span class="options-badge">{language.t('options')}</span>
-              {/if}
+              {#if qty && !oos}<span class="qty-badge">{qty}</span>{/if}
+              {#if oos}<span class="oos-badge">{language.t('stockOut')}</span>{/if}
             </div>
             <div class="item-info">
               <div class="item-name">{item.name}</div>
-              <div class="item-price">{formatRupiah(itemPrice(item))}</div>
+              <div class="item-meta">
+                <span class="item-price">{itemPrice(item) > 0 ? formatRupiah(itemPrice(item)) : ''}</span>
+                {#if hasItemModifiers(item)}<span class="item-opt">{language.t('pickOptions')}</span>{/if}
+              </div>
+              {#if tracked && !oos}<div class="item-stock">{language.t('stockRemaining')} {item.stock}</div>{/if}
             </div>
           </button>
         {:else}
@@ -764,29 +1339,15 @@
             disabled={oos}
             onclick={() => addItem(item)}
           >
-            <div class="list-thumb">
-              {#if item.icon}
-                <div class="list-thumb-emoji">{item.icon}</div>
-              {:else}
-                <img
-                  src={mediaUrl(item.image_url) ?? '/images/product-placeholder.svg'}
-                  alt={item.name}
-                  class="list-thumb-img {item.image_url ? 'object-cover' : 'object-contain p-2'}"
-                />
-              {/if}
-            </div>
             <div class="list-info">
-              <div class="list-name">{item.name}</div>
+              <div class="list-name">{item.name}{#if oos}<span class="tag tag--oos">{language.t('stockOut')}</span>{/if}</div>
               <div class="list-tags">
-                {#if hasItemModifiers(item)}<span class="tag tag--opt">{language.t('options')}</span>{/if}
-                {#if oos}<span class="tag tag--oos">{language.t('stockOut')}</span>{/if}
-                {#if tracked && !oos}<span class="tag tag--stock">{language.t('stockRemaining')} {item.stock}</span>{/if}
+                {#if hasItemModifiers(item)}<span class="item-opt">{language.t('pickOptions')}</span>{/if}
+                {#if tracked && !oos}<span class="item-stock">{language.t('stockRemaining')} {item.stock}</span>{/if}
               </div>
-              <div class="list-price">{formatRupiah(itemPrice(item))}</div>
             </div>
-            {#if qty}
-              <span class="qty-pill">{qty}</span>
-            {/if}
+            <span class="list-price">{itemPrice(item) > 0 ? formatRupiah(itemPrice(item)) : ''}</span>
+            {#if qty}<span class="qty-pill">{qty}</span>{/if}
           </button>
         {:else}
           <div class="menu-empty">{loading ? language.t('loading') : language.t('noItemsFound')}</div>
@@ -807,288 +1368,15 @@
 
   <!-- Desktop cart panel -->
   <aside class="cart-panel">
-    <div class="cart-header">
-      <div class="flex min-w-0 flex-1 flex-col gap-1.5">
-        {#if posDineInEnabled || hasOnline}{@render typeTabs()}{/if}
-        {#if posTableEnabled && !onlineMode}
-          <div class="flex items-center gap-2">
-            <button
-              class="meta-table-btn {posTableNumber ? 'meta-table-btn--selected' : ''}"
-              onclick={() => tableModalOpen = true}
-            >{posTableNumber ? `${language.t('table')} ${posTableNumber}` : language.t('selectTable')}</button>
-            {#if posTableNumber}
-              <button class="meta-clear" onclick={() => posTableNumber = null}>×</button>
-            {/if}
-          </div>
-        {/if}
-        {#if !posDineInEnabled && !posTableEnabled && !hasOnline}
-          <h2 class="display-font cart-title">{language.t('order')}</h2>
-        {/if}
-      </div>
-      {#if totalItems > 0}
-        <span class="cart-badge">{totalItems}</span>
-      {/if}
-    </div>
-
-    <div class="cart-lines">
-      {#each cart as line}
-        {@const atLimit = line.item.stock !== null && line.item.stock !== undefined && line.quantity >= line.item.stock}
-        <div class="cart-line">
-          <div class="cart-line-body">
-            <div class="cart-line-name">{line.item.name}</div>
-            {#if choiceNames(line)}<div class="cart-line-mods">{choiceNames(line)}</div>{/if}
-            {#if atLimit}<div class="cart-line-limit">{language.t('maxStockReached')}</div>{/if}
-            <div class="cart-line-price">{formatRupiah(getLineUnitPrice(line) * line.quantity)}</div>
-          </div>
-          <div class="qty-stepper">
-            <button class="step-btn" onclick={() => changeQty(line, -1)}>−</button>
-            <span class="step-num">{line.quantity}</span>
-            <button class="step-btn" disabled={atLimit} onclick={() => changeQty(line, 1)}>+</button>
-          </div>
-        </div>
-      {:else}
-        <div class="cart-empty">
-          <div class="cart-empty-icon">🧾</div>
-          <div>{language.t('cartEmpty')}</div>
-        </div>
-      {/each}
-    </div>
-
-    <div class="cart-footer">
-      {@render onlineForm()}
-      {#if posCustomerNameEnabled && !onlineMode}
-        <div class="order-meta">
-          <div class="meta-row">
-            <input
-              class="field text-sm"
-              placeholder={language.t('customerNamePlaceholder')}
-              bind:value={customerName}
-            />
-          </div>
-        </div>
-      {/if}
-
-      {#if !onlineMode}
-
-      <!-- Discount row -->
-      <div class="discount-row">
-        {#if promoResult?.valid && promoResult.discount_amount > 0}
-          <div class="discount-chip">
-            <span class="ms !text-[13px] shrink-0" aria-hidden="true">sell</span>
-            <span class="discount-chip-label">
-              {appliedDiscountLabel || language.t('discounts')}
-              <span class="discount-chip-savings">· {language.t('discountSavings')} {formatRupiah(promoResult.discount_amount)}</span>
-            </span>
-            <button class="discount-chip-clear" onclick={clearAppliedDiscount} aria-label={language.t('discounts')}>×</button>
-          </div>
-        {:else if promoResult !== null && !promoResult.valid}
-          <div class="discount-err-row">
-            <button class="discount-trigger" onclick={() => discountModalOpen = true}>
-              <span class="ms !text-[13px]" aria-hidden="true">sell</span>
-              <span>{language.t('addDiscount')}</span>
-            </button>
-            <span class="discount-err-msg">{promoResult.message}</span>
-          </div>
-        {:else}
-          <button
-            class="discount-trigger {promoLoading ? 'discount-trigger--loading' : ''}"
-            onclick={() => discountModalOpen = true}
-          >
-            <span class="ms !text-[13px]" aria-hidden="true">sell</span>
-            <span>{promoLoading ? language.t('checking') : language.t('addDiscount')}</span>
-          </button>
-        {/if}
-      </div>
-
-      <div class="pay-grid">
-        {#each payments as p}
-          <button
-            class="pay-btn {paymentMethod === p.value ? 'pay-btn--active' : ''}"
-            onclick={() => paymentMethod = p.value}
-          >
-            <span class="pay-icon">{p.icon}</span>
-            <span class="pay-lbl">{paymentLabel(p.value)}</span>
-          </button>
-        {/each}
-      </div>
-      {#if providers.length}
-        <div class="{CHIP_ROW} mb-2" role="radiogroup" aria-label={language.t('payProvider')}>
-          {#each providers as name (name)}
-            <button type="button" role="radio" aria-checked={paymentProvider === name} class="{chip(paymentProvider === name)} h-8 text-xs" onclick={() => (paymentProvider = name)}>{name}</button>
-          {/each}
-        </div>
-      {/if}
-
-      {/if}
-
-      <div class="order-summary">
-        <div class="summary-row">
-          <span>{language.t('subtotal')}</span>
-          <span>{formatRupiah(subtotal)}</span>
-        </div>
-        {#if promoResult?.valid && promoResult.discount_amount > 0}
-          <div class="summary-row summary-row--discount">
-            <span>{language.t('discounts')} {appliedDiscountLabel ? `· ${appliedDiscountLabel}` : ''}</span>
-            <span>−{formatRupiah(promoResult.discount_amount)}</span>
-          </div>
-        {/if}
-        {#if serviceFee > 0}
-          <div class="summary-row"><span>{language.t('serviceLabel')}</span><span>{formatRupiah(serviceFee)}</span></div>
-        {/if}
-        {#if pb1Fee > 0}
-          <div class="summary-row"><span>{language.t('pb1Label')}</span><span>{formatRupiah(pb1Fee)}</span></div>
-        {/if}
-      </div>
-
-      <button
-        class="charge-btn"
-        disabled={cart.length === 0 || checkingOut || (onlineMode && !onlineValid)}
-        onclick={handleCharge}
-      >
-        {checkingOut ? language.t('processing') : `${language.t(onlineMode ? 'onlineSend' : 'charge')} ${formatRupiah(totalDue)}`}
-      </button>
-    </div>
+    {@render cartPanel(false)}
   </aside>
 </div>
 
 <!-- Mobile cart sheet -->
 {#if mobileCartOpen}
-  <div
-    class="sheet-backdrop"
-    role="presentation"
-    onclick={(e) => { if (e.target === e.currentTarget) mobileCartOpen = false; }}
-  >
+  <div class="sheet-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) mobileCartOpen = false; }}>
     <div class="cart-sheet" role="dialog" aria-modal="true" aria-label="Cart" tabindex="-1">
-      <div class="cart-header sheet-header">
-        <div class="flex min-w-0 flex-1 flex-col gap-1.5">
-          {#if posDineInEnabled || hasOnline}{@render typeTabs()}{/if}
-          {#if posTableEnabled && !onlineMode}
-            <div class="flex items-center gap-2">
-              <button
-                class="meta-table-btn {posTableNumber ? 'meta-table-btn--selected' : ''}"
-                onclick={() => tableModalOpen = true}
-              >{posTableNumber ? `${language.t('table')} ${posTableNumber}` : language.t('selectTable')}</button>
-              {#if posTableNumber}
-                <button class="meta-clear" onclick={() => posTableNumber = null}>×</button>
-              {/if}
-            </div>
-          {/if}
-          {#if !posDineInEnabled && !posTableEnabled && !hasOnline}
-            <h2 class="display-font cart-title">{language.t('order')}</h2>
-          {/if}
-        </div>
-        <div class="flex items-center gap-3">
-          {#if totalItems > 0}<span class="cart-badge">{totalItems}</span>{/if}
-          <button class="icon-btn" onclick={() => mobileCartOpen = false}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
-        </div>
-      </div>
-
-      <div class="cart-lines">
-        {#each cart as line}
-          {@const atLimit = line.item.stock !== null && line.item.stock !== undefined && line.quantity >= line.item.stock}
-          <div class="cart-line">
-            <div class="cart-line-body">
-              <div class="cart-line-name">{line.item.name}</div>
-              {#if choiceNames(line)}<div class="cart-line-mods">{choiceNames(line)}</div>{/if}
-              {#if atLimit}<div class="cart-line-limit">{language.t('maxStockReached')}</div>{/if}
-              <div class="cart-line-price">{formatRupiah(getLineUnitPrice(line) * line.quantity)}</div>
-            </div>
-            <div class="qty-stepper">
-              <button class="step-btn" onclick={() => changeQty(line, -1)}>−</button>
-              <span class="step-num">{line.quantity}</span>
-              <button class="step-btn" disabled={atLimit} onclick={() => changeQty(line, 1)}>+</button>
-            </div>
-          </div>
-        {:else}
-          <div class="cart-empty">
-            <div class="cart-empty-icon">🧾</div>
-          <div>{language.t('cartEmpty')}</div>
-          </div>
-        {/each}
-      </div>
-
-      <div class="cart-footer">
-        {@render onlineForm()}
-      {#if posCustomerNameEnabled && !onlineMode}
-          <div class="order-meta">
-            <div class="meta-row">
-              <input
-                class="field text-sm"
-                placeholder={language.t('customerNamePlaceholder')}
-                bind:value={customerName}
-              />
-            </div>
-          </div>
-        {/if}
-
-        <!-- Discount row (mobile) -->
-        {#if !onlineMode}
-        <div class="discount-row">
-          {#if promoResult?.valid && promoResult.discount_amount > 0}
-            <div class="discount-chip">
-              <span class="ms !text-[13px] shrink-0" aria-hidden="true">sell</span>
-              <span class="discount-chip-label">
-                {appliedDiscountLabel || language.t('discounts')}
-                <span class="discount-chip-savings">· {language.t('discountSavings')} {formatRupiah(promoResult.discount_amount)}</span>
-              </span>
-              <button class="discount-chip-clear" onclick={clearAppliedDiscount} aria-label={language.t('discounts')}>×</button>
-            </div>
-          {:else if promoResult !== null && !promoResult.valid}
-            <div class="discount-err-row">
-              <button class="discount-trigger" onclick={() => discountModalOpen = true}>
-                <span class="ms !text-[13px]" aria-hidden="true">sell</span>
-                <span>{language.t('addDiscount')}</span>
-              </button>
-              <span class="discount-err-msg">{promoResult.message}</span>
-            </div>
-          {:else}
-            <button
-              class="discount-trigger {promoLoading ? 'discount-trigger--loading' : ''}"
-              onclick={() => discountModalOpen = true}
-            >
-              <span class="ms !text-[13px]" aria-hidden="true">sell</span>
-              <span>{promoLoading ? language.t('checking') : language.t('addDiscount')}</span>
-            </button>
-          {/if}
-        </div>
-        <div class="pay-grid">
-          {#each payments as p}
-            <button
-              class="pay-btn {paymentMethod === p.value ? 'pay-btn--active' : ''}"
-              onclick={() => paymentMethod = p.value}
-            >
-              <span class="pay-icon">{p.icon}</span>
-              <span class="pay-lbl">{paymentLabel(p.value)}</span>
-            </button>
-          {/each}
-        </div>
-        {#if providers.length}
-          <div class="{CHIP_ROW} mb-2" role="radiogroup" aria-label={language.t('payProvider')}>
-            {#each providers as name (name)}
-              <button type="button" role="radio" aria-checked={paymentProvider === name} class="{chip(paymentProvider === name)} h-8 text-xs" onclick={() => (paymentProvider = name)}>{name}</button>
-            {/each}
-          </div>
-        {/if}
-        {/if}
-        <div class="order-summary">
-          <div class="summary-row"><span>{language.t('subtotal')}</span><span>{formatRupiah(subtotal)}</span></div>
-          {#if promoResult?.valid && promoResult.discount_amount > 0}
-            <div class="summary-row summary-row--discount">
-              <span>{language.t('discounts')} {appliedDiscountLabel ? `· ${appliedDiscountLabel}` : ''}</span>
-              <span>−{formatRupiah(promoResult.discount_amount)}</span>
-            </div>
-          {/if}
-          {#if serviceFee > 0}
-            <div class="summary-row"><span>{language.t('serviceLabel')}</span><span>{formatRupiah(serviceFee)}</span></div>
-          {/if}
-          {#if pb1Fee > 0}
-            <div class="summary-row"><span>{language.t('pb1Label')}</span><span>{formatRupiah(pb1Fee)}</span></div>
-          {/if}
-        </div>
-        <button class="charge-btn" disabled={cart.length === 0 || checkingOut || (onlineMode && !onlineValid)} onclick={handleCharge}>
-          {checkingOut ? language.t('processing') : `${language.t(onlineMode ? 'onlineSend' : 'charge')} ${formatRupiah(totalDue)}`}
-        </button>
-      </div>
+      {@render cartPanel(true)}
     </div>
   </div>
 {/if}
@@ -1209,37 +1497,35 @@
 
 <!-- Modifier modal -->
 {#if modifierItem}
-  <div class="sheet-backdrop" role="presentation">
-    <section class="modifier-modal" role="dialog" aria-modal="true" tabindex="-1">
+  <div class="sheet-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) closeModifierModal(); }}>
+    <section class="modifier-modal" role="dialog" aria-modal="true" aria-label={modifierItem.name} tabindex="-1">
       <div class="modifier-header">
         <div class="modifier-thumb">
-          <img
-            src={mediaUrl(modifierItem.image_url) ?? '/images/product-placeholder.svg'}
-            alt={modifierItem.name}
-            class="h-full w-full {modifierItem.image_url ? 'object-cover' : 'object-contain p-3'}"
-          />
+          {#if modifierItem.image_url}
+            <img src={mediaUrl(modifierItem.image_url)} alt="" class="h-full w-full object-cover" />
+          {:else}
+            <div class="img-placeholder" aria-hidden="true"><CupcakeIcon size={28} /></div>
+          {/if}
         </div>
-        <div class="modifier-info">
-          <h2 class="display-font modifier-name">{modifierItem.name}</h2>
-          <p class="modifier-base">{language.t('base')} {formatRupiah(itemPrice(modifierItem))}</p>
-        </div>
-        <button class="icon-btn" onclick={closeModifierModal}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
+        <div class="modifier-info"><h2 class="modifier-name">{modifierItem.name}</h2></div>
+        <button class="icon-btn" onclick={closeModifierModal} aria-label={language.t('close')}><span class="ms !text-[20px]" aria-hidden="true">close</span></button>
       </div>
 
       <div class="modifier-body">
         {#each modifierItem.option_groups ?? [] as group}
           {#if getGroupChoices(group).length}
             <div class="modifier-group">
-              <div class="group-label">
-                {getGroupLabel(group)}
-                {#if group.required}<span class="group-required">{language.t('required')}</span>{/if}
-              </div>
+              <div class="group-label">{getGroupLabel(group)}{#if group.is_required ?? group.required}<span class="group-required">{language.t('required')}</span>{/if}</div>
               <div class="choice-wrap">
                 {#each getGroupChoices(group) as choice}
                   <button
                     class="choice-btn {selectedOptionChoiceIds[group.id] === choice.id ? 'choice-btn--active' : ''}"
+                    aria-pressed={selectedOptionChoiceIds[group.id] === choice.id}
                     onclick={() => selectedOptionChoiceIds = { ...selectedOptionChoiceIds, [group.id]: choice.id }}
-                  >{getChoiceLabel(choice)}</button>
+                  >
+                    {getChoiceLabel(choice)}
+                    {#if mk(getChoicePrice(choice)) > 0}<span class="choice-price">+{formatRupiah(mk(getChoicePrice(choice)))}</span>{/if}
+                  </button>
                 {/each}
               </div>
             </div>
@@ -1249,44 +1535,61 @@
         {#each modifierItem.addon_groups ?? [] as group}
           {#if getGroupChoices(group).length}
             <div class="modifier-group">
-              <div class="group-label">{getGroupLabel(group)}</div>
+              <div class="group-label">{getGroupLabel(group)}{#if group.is_required || (group.min_select ?? 0) > 0}<span class="group-required">{language.t('required')}</span>{/if}</div>
               <div class="choice-wrap">
                 {#each getGroupChoices(group) as choice}
                   <button
                     class="choice-btn {selectedAddonChoiceIds.includes(choice.id) ? 'choice-btn--active' : ''}"
+                    aria-pressed={selectedAddonChoiceIds.includes(choice.id)}
                     onclick={() => toggleAddon(choice.id)}
                   >
                     {getChoiceLabel(choice)}
-                    <span class="choice-price">+{formatRupiah(mk(getChoicePrice(choice)))}</span>
+                    {#if mk(getChoicePrice(choice)) > 0}<span class="choice-price">+{formatRupiah(mk(getChoicePrice(choice)))}</span>{/if}
                   </button>
                 {/each}
               </div>
             </div>
           {/if}
         {/each}
+
+        <div class="modifier-group">
+          <div class="group-label">{language.t('lineNote')}</div>
+          <div class="choice-wrap">
+            <button class="choice-btn {modifierNoteOn ? 'choice-btn--active' : ''}" aria-pressed={modifierNoteOn} onclick={() => (modifierNoteOn = !modifierNoteOn)}>
+              <span class="ms !text-[20px]" aria-hidden="true">edit_note</span>{language.t('noteCustom')}
+            </button>
+          </div>
+          {#if modifierNoteOn}
+            <input class="field note-field" maxlength="80" aria-label={language.t('lineNote')} placeholder={language.t('lineNotePlaceholder')} bind:value={modifierNote} use:focusEl />
+            <span class="note-hint">{language.t('noteHint')}</span>
+          {/if}
+        </div>
       </div>
 
       <div class="modifier-footer">
-        <div class="qty-stepper-lg">
-          <button class="step-btn-lg" onclick={() => modifierQty = Math.max(1, modifierQty - 1)}>−</button>
-          <span class="step-num-lg">{modifierQty}</span>
-          <button
-            class="step-btn-lg"
-            disabled={modifierItem?.stock !== null && modifierItem?.stock !== undefined && modifierQty >= modifierItem.stock - itemQuantity(modifierItem)}
-            onclick={() => modifierQty += 1}
-          >+</button>
-        </div>
-        <button
-          class="charge-btn modifier-add-btn"
-          disabled={!canAddModifierItem}
-          onclick={addModifierItemToCart}
-        >{language.t('add')} · {formatRupiah(modifierUnitPrice * modifierQty)}</button>
+        <button class="charge-btn modifier-add-btn" disabled={!canAddModifierItem} onclick={addModifierItemToCart}>
+          {language.t('addShort')}{modifierUnitPrice > 0 ? ` · ${formatRupiah(modifierUnitPrice)}` : ''}
+        </button>
       </div>
     </section>
   </div>
 {/if}
 
 <style>
+  .cart-line-note { font-size: 12px; color: #6a4400; font-weight: 500; }
+  .detail-wrap { padding: 8px 16px 0; display: flex; flex-direction: column; gap: 8px; }
+  .detail-summary { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 6px 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--white); font-size: 14px; text-align: left; min-width: 0; }
+  .detail-summary:hover { background: var(--cream); }
+  .detail-chips { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; overflow: hidden; white-space: nowrap; }
+  .detail-chip { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; color: var(--text-muted); }
+  .detail-chip--on { color: var(--espresso); font-weight: 600; }
+  .detail-chip--shrink { flex-shrink: 1; min-width: 0; }
+  .detail-body { display: flex; flex-direction: column; gap: 8px; }
+  .detail-row { display: flex; gap: 8px; }
+  .detail-field { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 8px; height: var(--om-tap, 44px); padding: 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--white); font-size: 16px; color: var(--espresso); }
+  .detail-field--stepper { justify-content: space-between; padding: 0; }
+  .detail-step { width: var(--om-tap, 44px); height: 100%; display: grid; place-items: center; color: var(--text-muted); border-radius: 10px; }
+  .detail-step:hover { background: var(--cream); color: var(--espresso); }
   /* ─── Shell ─── */
   .pos-shell {
     position: relative;
@@ -1418,7 +1721,7 @@
   /* ─── Grid ─── */
   .item-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 12px;
     padding: 4px 16px 16px;
     overflow-y: auto;
@@ -1426,7 +1729,7 @@
     align-content: start;
     grid-auto-rows: max-content;
   }
-  @media (min-width: 768px) { .item-grid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); } }
+  @media (min-width: 768px) { .item-grid { grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); } }
 
   .item-card {
     display: flex;
@@ -1454,14 +1757,6 @@
   .item-img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; }
   .item-emoji { position: absolute; inset: 0; display: grid; place-items: center; font-size: 4rem; line-height: 1; overflow: hidden; }
 
-  .item-oos-overlay {
-    position: absolute;
-    inset: 0;
-    background: rgba(0,0,0,0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
   .oos-badge {
     background: var(--om-danger-tint);
     color: var(--om-danger);
@@ -1484,28 +1779,6 @@
     font-weight: 700;
     display: grid;
     place-items: center;
-  }
-  .stock-badge {
-    position: absolute;
-    bottom: 6px;
-    right: 6px;
-    background: var(--om-warning-tint);
-    color: var(--om-warning);
-    padding: 2px 8px;
-    border-radius: var(--om-r-pill);
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .options-badge {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    background: rgba(255,255,255,0.95);
-    color: var(--om-ink);
-    padding: 3px 9px;
-    border-radius: var(--om-r-pill);
-    font-size: 12px;
-    font-weight: 600;
   }
 
   .item-info {
@@ -1567,25 +1840,13 @@
   .list-row--selected { border-color: var(--warm-brown); background: var(--cream); }
   .list-row--oos { opacity: 0.5; cursor: not-allowed; }
 
-  .list-thumb {
-    width: 52px;
-    height: 52px;
-    flex-shrink: 0;
-    border-radius: 10px;
-    overflow: hidden;
-    background: linear-gradient(135deg, var(--light-brown), #d4b896);
-  }
-  .list-thumb-img { width: 100%; height: 100%; }
-  .list-thumb-emoji { width: 100%; height: 100%; display: grid; place-items: center; font-size: 2rem; line-height: 1; }
   .list-info { flex: 1; min-width: 0; }
   .list-name { font-size: 0.9rem; font-weight: 700; color: var(--dark); }
   .list-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0; }
   .list-price { font-size: 0.85rem; font-weight: 800; color: var(--warm-brown); }
 
   .tag { padding: 2px 8px; border-radius: 99px; font-size: 0.65rem; font-weight: 800; }
-  .tag--opt { background: var(--light-brown); color: var(--warm-brown); }
   .tag--oos { background: #fee2e2; color: #b91c1c; }
-  .tag--stock { background: var(--cream); color: var(--text-muted); }
 
   .qty-pill {
     display: grid;
@@ -1739,58 +2000,6 @@
   }
 
   /* ─── Order Meta ─── */
-  .order-meta {
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 10px;
-    margin-bottom: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .meta-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .meta-type-btn {
-    flex: 1;
-    border-radius: 999px;
-    border: 1.5px solid var(--border);
-    background: var(--white);
-    color: var(--text-muted);
-    font-size: 0.78rem;
-    font-weight: 700;
-    padding: 7px 10px;
-    transition: all 0.15s;
-    cursor: pointer;
-  }
-  .meta-type-btn:hover { background: var(--cream); }
-  .meta-type-btn--active {
-    border-color: var(--primary);
-    background: var(--primary);
-    color: var(--white);
-  }
-  .meta-type-btn--active:hover { background: var(--dark); border-color: var(--dark); }
-  .meta-table-btn {
-    flex: 1;
-    border-radius: 999px;
-    border: 1.5px solid var(--border);
-    background: var(--white);
-    color: var(--text-muted);
-    font-size: 0.78rem;
-    font-weight: 700;
-    padding: 7px 14px;
-    text-align: left;
-    transition: all 0.15s;
-    cursor: pointer;
-  }
-  .meta-table-btn:hover { background: var(--cream); }
-  .meta-table-btn--selected {
-    border-color: var(--primary);
-    background: var(--primary);
-    color: var(--white);
-  }
-  .meta-table-btn--selected:hover { background: var(--dark); border-color: var(--dark); }
   .meta-clear {
     width: 28px;
     height: 28px;
@@ -1808,149 +2017,16 @@
   }
   .meta-clear:hover { border-color: var(--primary); color: var(--espresso); }
 
-  .pay-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 10px; }
 
   /* ─── Cash Modal ─── */
   .cash-backdrop { z-index: 55; }
 
-  .cash-modal {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    max-height: 95vh;
-    overflow-y: auto;
-    border-radius: 24px 24px 0 0;
-    background: var(--white);
-    box-shadow: 0 -8px 40px rgba(0,0,0,0.15);
-  }
-  @media (min-width: 768px) {
-    .cash-modal {
-      max-width: 340px;
-      max-height: 90vh;
-      border-radius: 24px;
-      box-shadow: 0 24px 64px rgba(0,0,0,0.22);
-    }
-  }
 
-  .cash-modal-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    padding: 18px 18px 16px;
-    border-bottom: 1px solid var(--border);
-  }
-  .cash-modal-label {
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    margin-bottom: 3px;
-  }
-  .cash-modal-total {
-    font-size: 1.65rem;
-    font-weight: 700;
-    color: var(--espresso);
-    line-height: 1.1;
-  }
 
-  .cash-modal-footer {
-    display: flex;
-    gap: 10px;
-    padding: 14px 16px 18px;
-    border-top: 1px solid var(--border);
-  }
-  .cash-confirm-btn { flex: 1; }
 
   /* Calculator internals */
-  .cash-display {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    background: var(--primary);
-    color: white;
-  }
-  .cash-lbl {
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: rgba(255,255,255,0.5);
-    margin-bottom: 3px;
-  }
-  .cash-val {
-    font-size: 1.65rem;
-    font-weight: 700;
-    line-height: 1.1;
-  }
-  .calc-back-btn {
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
-    border: none;
-    background: rgba(255,255,255,0.12);
-    color: white;
-    font-size: 1rem;
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: background 0.12s;
-  }
-  .calc-back-btn:hover { background: rgba(255,255,255,0.22); }
 
-  .calc-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1px;
-    background: var(--border);
-  }
-  .calc-key {
-    padding: 13px 0;
-    border: none;
-    background: var(--white);
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: var(--espresso);
-    cursor: pointer;
-    transition: background 0.1s;
-    letter-spacing: 0.02em;
-  }
-  .calc-key:hover { background: var(--cream); }
-  .calc-key:active { background: var(--light-brown); }
-  .calc-key--clear { display: grid; place-items: center; color: var(--text-muted); }
-  .calc-key--clear:hover { background: #fef2f2; color: #b91c1c; }
-  .calc-key--clear:active { background: #fee2e2; }
 
-  .cash-change {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 9px 14px;
-    font-size: 0.82rem;
-    font-weight: 700;
-  }
-  .cash-change--ok { background: #dcfce7; color: #15803d; }
-  .cash-change--short { background: #fef2f2; color: #b91c1c; }
-  .cash-change--hint { background: var(--cream); color: var(--text-muted); font-weight: 400; }
-  .pay-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 3px;
-    padding: 8px 4px;
-    border-radius: 12px;
-    border: 1.5px solid var(--border);
-    background: white;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .pay-btn:hover { border-color: var(--warm-brown); background: var(--cream); }
-  .pay-btn--active { background: var(--primary); border-color: var(--primary); color: white; }
-  .pay-btn--active:hover { background: var(--dark); border-color: var(--dark); }
-  .pay-icon { font-size: 1.15rem; line-height: 1; }
-  .pay-lbl { font-size: 0.65rem; font-weight: 800; letter-spacing: 0.04em; }
 
   .order-summary { margin-bottom: 12px; }
   .summary-row {
@@ -2067,7 +2143,6 @@
   }
   .modifier-info { flex: 1; min-width: 0; }
   .modifier-name { font-size: 1.35rem; font-weight: 700; color: var(--espresso); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .modifier-base { font-size: 0.82rem; color: var(--text-muted); margin: 3px 0 0; }
 
   .modifier-body { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 20px; }
   .group-label {
@@ -2114,33 +2189,6 @@
     border-top: 1px solid var(--border);
     flex-shrink: 0;
   }
-  .qty-stepper-lg {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 12px;
-    border-radius: 12px;
-    border: 1.5px solid var(--border);
-    background: var(--cream);
-    flex-shrink: 0;
-  }
-  .step-btn-lg {
-    display: grid;
-    place-items: center;
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
-    border: none;
-    background: white;
-    color: var(--espresso);
-    font-size: 1.2rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background 0.12s;
-  }
-  .step-btn-lg:hover:not(:disabled) { background: var(--primary); color: white; }
-  .step-btn-lg:disabled { opacity: 0.3; cursor: not-allowed; }
-  .step-num-lg { width: 28px; text-align: center; font-size: 1rem; font-weight: 800; }
   .modifier-add-btn { flex: 1; }
 
   /* ─── Discount row ─── */
@@ -2327,7 +2375,6 @@
   .summary-row--discount { color: #16a34a; font-weight: 700; }
 
   /* ─── Discount display ─── */
-  .cash-modal-subtotal-note { font-size: 0.68rem; color: #16a34a; font-weight: 700; margin-top: 2px; }
 
   /* ─── Utilities ─── */
   .no-scrollbar { scrollbar-width: none; }
@@ -2362,4 +2409,110 @@
   .online-lbl { display: block; margin-bottom: 2px; font-size: 12px; font-weight: 500; color: var(--om-text-secondary); }
   .online-warn { padding: 8px 10px; border-radius: 10px; background: var(--om-warning-tint); color: var(--om-warning); font-size: 12px; }
   .online-tax { font-size: 12px; color: var(--om-text-secondary); }
+
+  /* ─── open bill ─── */
+  .ob-open { position: relative; width: var(--om-tap, 44px); height: var(--om-tap, 44px); flex-shrink: 0; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: var(--white); color: var(--espresso); }
+  .ob-open:hover { border-color: var(--om-ink); }
+  .ob-open-badge { position: absolute; top: -7px; right: -7px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: #8e1a14; color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+  .footer-actions { display: flex; gap: 8px; margin-top: 6px; }
+  .footer-actions .charge-btn { flex: 1; min-width: 0; width: auto; }
+  .ob-save { flex: none; height: 50px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--om-brand); background: var(--white); color: var(--om-brand); font-size: 16px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+  .ob-save:disabled { opacity: 0.4; cursor: not-allowed; }
+  .ob-modal { display: flex; flex-direction: column; width: 100%; max-width: 540px; max-height: 88vh; background: var(--white); border-radius: 22px 22px 0 0; overflow: hidden; box-shadow: 0 20px 60px rgba(16, 20, 15, 0.25); }
+  @media (min-width: 768px) { .ob-modal { border-radius: 22px; } }
+  .ob-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 12px; border-bottom: 1px solid #f0eee9; }
+  .ob-search { display: flex; align-items: center; gap: 8px; margin: 12px 20px 0; height: var(--om-tap, 44px); padding: 0 12px; border: 1px solid #d7d5ce; border-radius: 10px; color: var(--text-muted); }
+  .ob-search input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 16px; color: var(--espresso); }
+  .ob-list { flex: 1; overflow: auto; padding: 4px 20px calc(16px + env(safe-area-inset-bottom)); }
+  .ob-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f0eee9; }
+  .ob-add { height: var(--om-tap, 44px); padding: 0 14px; border-radius: 10px; border: 1px solid var(--om-brand); background: var(--white); color: var(--om-brand); font-weight: 600; flex-shrink: 0; }
+  .line-void { flex-shrink: 0; height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid #fecaca; background: #fef2f2; color: var(--om-danger); font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+  .line-void:hover:not(:disabled) { background: #fee2e2; }
+  .line-void:disabled { opacity: 0.4; cursor: not-allowed; }
+  .void-modal { display: flex; flex-direction: column; gap: 16px; width: 100%; max-width: 440px; padding: 20px; background: var(--white); border-radius: 22px 22px 0 0; box-shadow: 0 20px 60px rgba(16, 20, 15, 0.25); }
+  @media (min-width: 768px) { .void-modal { border-radius: 22px; } }
+  .cart-line--locked { opacity: 0.65; gap: 8px; }
+  .ob-pay { height: var(--om-tap, 44px); padding: 0 16px; border-radius: 10px; background: var(--om-brand); color: #fff; font-weight: 600; flex-shrink: 0; }
+  .ob-empty { padding: 36px 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; color: var(--text-muted); font-size: 12px; }
+  .ob-empty strong { color: var(--espresso); font-size: 14px; }
+  .pos-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 90; max-width: calc(100vw - 40px); padding: 12px 18px; border-radius: 12px; background: var(--om-ink); color: #fff; box-shadow: 0 10px 30px rgba(16, 20, 15, 0.25); }
+
+  /* ─── new-ui layout overrides ─── */
+  .img-placeholder { position: absolute; inset: 0; display: grid; place-items: center; background: var(--white); color: var(--om-text-secondary); opacity: 0.6; }
+  .cart-panel { width: 360px; }
+  .cart-header { align-items: center; justify-content: flex-start; gap: 8px; padding: 12px 16px 10px; border-bottom: none; }
+  .cart-title { font-size: 16px; font-weight: 600; flex: 1; min-width: 0; }
+  .cart-badge { background: var(--om-ink); color: #7ed76a; }
+  .cart-types { padding: 0 16px 8px; }
+  .type-seg { display: flex; gap: 0; padding: 4px; background: #f1f0ec; border-radius: 11px; }
+  .type-btn { flex: 1; min-width: 0; height: var(--om-tap, 44px); border-radius: 8px; font-size: 14px; font-weight: 600; color: var(--text-muted); }
+  .type-btn--active { background: var(--white); color: var(--espresso); box-shadow: 0 1px 2px rgba(16, 20, 15, 0.12); }
+  .cart-lines { padding: 0 16px; }
+  .cart-line { padding: 8px 0; border-bottom: 1px solid #f0eee9; align-items: center; }
+  .cart-line-body { cursor: pointer; min-height: 44px; display: flex; flex-direction: column; justify-content: center; }
+  .cart-line-name { font-size: 14px; font-weight: 600; }
+  .cart-line-price { font-size: 14px; font-weight: 600; color: var(--espresso); margin-top: 2px; }
+  .qty-stepper { gap: 0; border: 1px solid var(--border); border-radius: 10px; }
+  .cart-footer { background: var(--cream); border-top: 1px solid var(--border); padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); }
+  .summary-total { display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px; padding-top: 6px; border-top: 1px dashed #dad8d1; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .charge-btn { height: 50px; padding: 0 16px; border-radius: 12px; font-size: 16px; font-weight: 600; letter-spacing: 0; background: var(--om-brand); }
+  .charge-btn:hover:not(:disabled) { background: var(--om-brand); filter: brightness(0.92); }
+
+  .item-card { border-radius: 14px; border: 1.5px solid var(--border); background: var(--white); text-align: left; }
+  .item-img-wrap { padding-top: 75%; background: #eef0ea; }
+  .qty-badge { position: absolute; top: 10px; right: 10px; left: auto; bottom: auto; min-width: 26px; height: 26px; padding: 0 7px; border-radius: 13px; background: var(--om-ink); color: #7ed76a; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .oos-badge { position: absolute; top: 10px; left: 10px; padding: 3px 8px; border-radius: 6px; background: #fce9e6; color: #8e1a14; font-size: 12px; font-weight: 600; }
+  .item-info { padding: 11px 13px 13px; gap: 4px; }
+  .item-name { font-size: 16px; font-weight: 600; line-height: 1.3; }
+  .item-meta { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .item-price { font-size: 12px; font-weight: 400; color: #3b3f38; font-variant-numeric: tabular-nums; }
+  .item-opt { font-size: 12px; color: var(--om-brand); }
+  .item-stock { font-size: 12px; color: var(--text-muted); }
+  .list-row { min-height: 56px; border-radius: 12px; padding: 10px 14px; gap: 12px; align-items: center; }
+  .list-row--selected { border-color: var(--om-brand); background: var(--white); }
+  .list-name { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .list-tags { margin: 0; align-items: center; gap: 8px; }
+  .list-price { font-size: 16px; font-weight: 600; color: var(--espresso); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .qty-pill { background: var(--om-ink); color: #7ed76a; }
+
+  .modifier-modal { max-width: 440px; }
+  .modifier-header { padding: 18px 20px; gap: 14px; align-items: center; border-bottom: 1px solid #f0eee9; }
+  .modifier-thumb { position: relative; overflow: hidden; width: 56px; height: 56px; border-radius: 12px; }
+  .modifier-name { font-size: 16px; font-weight: 600; }
+  .modifier-body { padding: 16px 20px; gap: 16px; }
+  .group-label { font-size: 12px; font-weight: 400; color: var(--text-muted); text-transform: none; letter-spacing: 0; }
+  .choice-btn { height: var(--om-tap, 44px); padding: 0 14px; border-radius: 10px; border: 2px solid var(--border); background: var(--white); color: var(--espresso); font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
+  .choice-btn--active { background: var(--om-brand-tint); border-color: var(--om-brand); color: var(--espresso); }
+  .note-field { margin-top: 8px; border-color: var(--om-brand); }
+  .note-hint { display: block; margin-top: 4px; font-size: 12px; color: var(--text-muted); }
+  .modifier-footer { padding: 14px 20px 20px; }
+
+  .pay-modal { display: grid; grid-template-columns: 1fr; width: 100%; max-width: 800px; max-height: 92vh; overflow: auto; background: var(--white); border-radius: 22px 22px 0 0; box-shadow: 0 20px 60px rgba(16, 20, 15, 0.25); }
+  @media (min-width: 768px) { .pay-modal { grid-template-columns: 300px 1fr; border-radius: 22px; } }
+  .pay-sum { background: var(--om-ink); color: #eaf3e6; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+  .pay-sum-head { font-size: 12px; color: #7ed76a; }
+  .pay-sum-lbl { font-size: 12px; color: #a9b3a5; }
+  .pay-sum-total { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .pay-sum-save { font-size: 12px; color: #7ed76a; }
+  .pay-sum-items { display: flex; flex-direction: column; gap: 9px; font-size: 12px; color: #c7cfc3; border-top: 1px solid #2a3027; padding-top: 14px; flex: 1; max-height: 260px; overflow: auto; }
+  .pay-sum-line { display: flex; gap: 8px; }
+  .pay-sum-qty { color: #7ed76a; font-variant-numeric: tabular-nums; }
+  .pay-sum-sub { font-size: 12px; color: #a9b3a5; }
+  .pay-main { padding: 24px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .pay-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
+  .pay-tile { height: 70px; border-radius: 12px; border: 2px solid var(--border); background: var(--white); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+  .pay-tile--active { border-color: var(--om-brand); background: var(--om-brand-tint); }
+  .pay-tile-icon { height: 24px; display: flex; align-items: center; justify-content: center; color: var(--om-brand); }
+  .pay-tile-icon img { height: 20px; width: 52px; object-fit: contain; }
+  .pay-tile-lbl { font-size: 12px; font-weight: 500; color: #3b3f38; max-width: 100%; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pay-panel { flex: 1; min-height: 180px; border: 1px solid var(--border); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; background: var(--cream); }
+  .pay-panel-lbl { display: block; margin-bottom: 6px; font-size: 12px; color: var(--text-muted); }
+  .pay-cash-input { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 14px; border: 1.5px solid var(--om-ink); border-radius: 11px; background: var(--white); color: var(--text-muted); }
+  .pay-cash-input input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 20px; font-weight: 700; color: var(--espresso); font-variant-numeric: tabular-nums; }
+  .pay-quick { height: var(--om-tap, 44px); padding: 0 12px; border-radius: 9px; border: 1px solid var(--border); background: var(--white); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .pay-change { display: flex; justify-content: space-between; align-items: baseline; padding-top: 10px; border-top: 1px dashed #dad8d1; color: var(--text-muted); }
+  .pay-change span:last-child { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pay-hint { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; color: var(--text-muted); font-size: 12px; }
+  .pay-hint .ms { color: var(--om-brand); }
+  .pay-hint strong { color: var(--espresso); font-size: 14px; }
 </style>

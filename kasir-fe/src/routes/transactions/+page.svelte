@@ -18,8 +18,8 @@
 
   type Period = 'today' | 'yday' | '7d' | '30d';
   type ChannelFilter = 'all' | 'dine' | 'take' | 'online';
-  type StatusFilter = 'all' | 'verify' | 'kitchen' | 'ready' | 'confirmed' | 'done' | 'cancelled';
-  type OrderState = { key: MessageKey; tint: string; fg: string };
+  type StatusFilter = 'all' | 'verify' | 'open' | 'kitchen' | 'ready' | 'confirmed' | 'done' | 'cancelled';
+  type OrderState = { key: MessageKey; tint: string; fg: string; sub?: MessageKey };
 
   const VIEW_KEY = 'kasir.ordersView';
 
@@ -35,6 +35,7 @@
   ];
   const STATES = {
     verify: { key: 'txFVerify', tint: 'var(--om-warning-tint)', fg: 'var(--om-warning)' },
+    open: { key: 'txFOpen', tint: 'var(--om-warning-tint)', fg: 'var(--om-warning)' },
     new: { key: 'txStNew', tint: 'var(--om-info-tint)', fg: 'var(--om-info)' },
     cooking: { key: 'txStCooking', tint: 'var(--om-warning-tint)', fg: 'var(--om-warning)' },
     ready: { key: 'txFReady', tint: 'var(--om-brand-tint)', fg: 'var(--om-brand)' },
@@ -47,6 +48,7 @@
   let total = $state(0);
   let pageNo = $state(1);
   let pendingCount = $state(0);
+  let openCount = $state(0);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let channelSettings = $state<ChannelSetting[]>([]);
   let period = $state<Period>('today');
@@ -65,6 +67,11 @@
 
   function stateOf(o: Order): OrderState {
     if (o.status === 'PENDING') return STATES.verify;
+    if (o.status === 'OPEN') {
+      // an open bill is also running in the kitchen: "Open bill · Diproses"
+      const sub = kitchenOn ? ({ NEW: 'txStNew', COOKING: 'txStCooking', READY: 'txFReady' } as const)[o.kitchen_status as 'NEW' | 'COOKING' | 'READY'] : undefined;
+      return sub ? { ...STATES.open, sub } : STATES.open;
+    }
     if (o.status === 'CANCELLED') return STATES.cancelled;
     if (o.status === 'COMPLETED') return STATES.done;
     if (o.kitchen_status === 'NEW') return STATES.new;
@@ -77,6 +84,7 @@
   const STATUS_FILTERS: { id: StatusFilter; key: MessageKey; kitchen?: boolean }[] = [
     { id: 'all', key: 'txAll' },
     { id: 'verify', key: 'txFVerify' },
+    { id: 'open', key: 'txFOpen' },
     { id: 'kitchen', key: 'txFKitchen', kitchen: true },
     { id: 'ready', key: 'txFReady', kitchen: true },
     { id: 'confirmed', key: 'txFConfirmed' },
@@ -86,11 +94,13 @@
 
   // Filters, search and paging are applied by the server; `orders` is only the current page.
   let shown = $derived(orders);
-  let legend = $derived([...new Map(shown.map((o) => [stateOf(o).key, stateOf(o)])).values()]);
+  const stateLabel = (st: OrderState) => language.t(st.key) + (st.sub ? ` · ${language.t(st.sub)}` : '');
+  let legend = $derived([...new Map(shown.map((o) => [stateLabel(stateOf(o)), stateOf(o)])).values()]);
 
   const whereOf = (o: Order) =>
     o.channel ? CHANNEL_META[o.channel as keyof typeof CHANNEL_META]?.label ?? o.channel : o.order_type === 'DINE_IN' ? `${language.t('txDineIn')}${o.table_number ? ` · ${o.table_number}` : ''}` : language.t('txTakeAway');
-  const customerOf = (o: Order) => o.customer_name || (isQr(o) ? language.t('txSrcQr') : '—');
+  const customerOf = (o: Order) => o.customer_name || (isQr(o) ? language.t('txSrcQr') : language.t('obWalkIn'));
+  const whereIcon = (o: Order) => (o.channel ? 'delivery_dining' : o.order_type === 'DINE_IN' ? 'table_restaurant' : 'takeout_dining');
   const itemsOf = (o: Order) => (o.items ?? []).map((i) => (i.quantity > 1 ? `${i.quantity}× ` : '') + i.item_name_snapshot).join(', ');
   const payOf = (o: Order) => (o.channel ? CHANNEL_META[o.channel as keyof typeof CHANNEL_META]?.label ?? o.channel : o.payment_method);
   const sourceIcon = (o: Order) => (o.channel ? 'delivery_dining' : isQr(o) ? 'qr_code_2' : 'point_of_sale');
@@ -103,21 +113,24 @@
     if (!silent) loading = true;
     try {
       const q = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String((pageNo - 1) * PAGE_SIZE) });
-      // Orders waiting for verification are shown regardless of the period.
-      if (statusFilter !== 'verify') {
+      // Orders waiting for verification and unpaid open bills are shown regardless of the period.
+      if (statusFilter !== 'verify' && statusFilter !== 'open') {
         q.set('date_from', period === 'today' ? daysAgo(0) : period === 'yday' ? daysAgo(1) : period === '7d' ? daysAgo(6) : daysAgo(29));
         q.set('date_to', period === 'yday' ? daysAgo(1) : daysAgo(0));
       }
+      if (statusFilter === 'all') q.set('include_open', 'true');
       if (channelFilter !== 'all') q.set('kind', channelFilter);
       if (statusFilter !== 'all') q.set('state', statusFilter);
       if (query.trim()) q.set('search', query.trim());
-      const [res, pend] = await Promise.all([
+      const [res, pend, open] = await Promise.all([
         api.get<PaginatedResponse<Order>>(`/stores/${storeId}/orders?${q}`),
-        api.get<PaginatedResponse<Order>>(`/stores/${storeId}/orders?status=PENDING&limit=1`)
+        api.get<PaginatedResponse<Order>>(`/stores/${storeId}/orders?status=PENDING&limit=1`),
+        api.get<PaginatedResponse<Order>>(`/stores/${storeId}/orders?status=OPEN&limit=1`)
       ]);
       orders = paginatedItems(res);
       total = res.total;
       pendingCount = pend.total;
+      openCount = open.total;
       if (!orders.length && pageNo > 1) pageNo = Math.max(1, Math.ceil(total / PAGE_SIZE));
       error = '';
     } catch (err) {
@@ -151,15 +164,17 @@
   const remaining = (o: Order) => o.total_amount - (o.refunded_amount ?? 0);
   const canRefund = (o: Order) => canManage && !o.channel && (o.status === 'CONFIRMED' || o.status === 'COMPLETED') && remaining(o) > 0;
   const leftOf = (i: NonNullable<Order['items']>[number]) => i.quantity - (i.void_qty ?? 0);
+  // an unpaid open bill: lines can be voided without a refund method, no money moves
+  const canVoidOpen = (o: Order) => canManage && o.status === 'OPEN' && (o.items ?? []).reduce((n, i) => n + leftOf(i), 0) > 1;
   let hasShift = $derived(!!shiftState.current?.shift);
 
-  function openDialog(kind: 'refund' | 'void', o: Order) {
+  function openDialog(kind: 'refund' | 'void', o: Order, lineId = '') {
     dialog = { kind, order: o };
     dAmount = kind === 'refund' ? remaining(o).toLocaleString('id-ID') : '';
     dMethod = hasShift ? 'CASH' : 'TRANSFER';
     dReason = '';
     dNote = '';
-    dLine = (o.items ?? []).find((i) => leftOf(i) > 0)?.id ?? '';
+    dLine = lineId || ((o.items ?? []).find((i) => leftOf(i) > 0)?.id ?? '');
     dQty = '1';
     dError = '';
     void shiftState.load();
@@ -180,7 +195,7 @@
         if (amount <= 0) return void (dError = language.t('finErrAmount'));
         await api.post(`/stores/${storeId}/orders/${o.id}/refund`, { amount, method: dMethod, reason });
       } else {
-        await api.post(`/stores/${storeId}/orders/${o.id}/items/${dLine}/void`, { quantity: parseInt(dQty, 10) || 0, method: dMethod, reason });
+        await api.post(`/stores/${storeId}/orders/${o.id}/items/${dLine}/void`, { quantity: parseInt(dQty, 10) || 0, ...(o.status === 'OPEN' ? {} : { method: dMethod }), reason });
       }
       dialog = null;
       await load(true);
@@ -294,16 +309,36 @@
   ]);
 </script>
 
+{#snippet nameOf(o: Order)}
+  <span class="truncate {o.customer_name ? 'font-medium' : 'text-[var(--om-text-secondary)]'}">{customerOf(o)}</span>
+{/snippet}
+
+{#snippet whereChip(o: Order)}
+  <span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--om-fill-muted)] px-2 py-0.5 text-[12px] font-medium text-[var(--om-ink-2)]"><span class="ms !text-[14px]" aria-hidden="true">{whereIcon(o)}</span>{whereOf(o)}</span>
+  {#if !o.channel && (o.guest_count ?? 0) > 0}<span class="inline-flex shrink-0 items-center gap-0.5 text-[12px] text-[var(--om-text-secondary)]" title={language.t('guestCount')}><span class="ms !text-[14px]" aria-hidden="true">group</span>{o.guest_count}</span>{/if}
+{/snippet}
+
 <svelte:head><title>{language.t('transactions')} | Omnify</title></svelte:head>
 
 <div class="flex h-full min-h-0">
 <div class="min-w-0 flex-1 overflow-auto" style="padding: var(--om-page-pad)">
-{#if pendingCount > 0 && statusFilter !== 'verify'}
-  <div class="mb-4 flex flex-wrap items-center gap-3 rounded-[12px] border border-[#F4CFC9] bg-[var(--om-danger-tint)] px-4 py-3">
-    <span class="ms text-[var(--om-danger)]">qr_code_2</span>
-    <span class="min-w-[200px] flex-1 leading-snug text-[#7A1C16]"><strong>{pendingCount} {language.t('txBannerSuffix')}</strong></span>
-    <button class="rounded-[9px] bg-[var(--om-danger)] px-4 font-semibold text-white" style="min-height: var(--om-tap)" onclick={() => { statusFilter = 'verify'; pageNo = 1; }}>{language.t('txVerify')}</button>
+{#if (openCount > 0 && statusFilter !== 'open') || (pendingCount > 0 && statusFilter !== 'verify')}
+<div class="mb-4 flex flex-wrap gap-3">
+{#if openCount > 0 && statusFilter !== 'open'}
+  <div class="flex min-w-0 flex-1 basis-[340px] items-center gap-3 rounded-[12px] border border-[#EBD9A8] bg-[var(--om-warning-tint)] px-4 py-3">
+    <span class="ms text-[var(--om-warning)]">receipt_long</span>
+    <span class="min-w-0 flex-1 leading-snug text-[var(--om-warning)]"><strong>{openCount} {language.t('txOpenBanner')}</strong></span>
+    <button class="shrink-0 rounded-[9px] bg-[var(--om-warning)] px-4 font-semibold text-white" style="min-height: var(--om-tap)" onclick={() => { statusFilter = 'open'; pageNo = 1; }}>{language.t('txShow')}</button>
   </div>
+{/if}
+{#if pendingCount > 0 && statusFilter !== 'verify'}
+  <div class="flex min-w-0 flex-1 basis-[340px] items-center gap-3 rounded-[12px] border border-[#F4CFC9] bg-[var(--om-danger-tint)] px-4 py-3">
+    <span class="ms text-[var(--om-danger)]">qr_code_2</span>
+    <span class="min-w-0 flex-1 leading-snug text-[#7A1C16]"><strong>{pendingCount} {language.t('txBannerSuffix')}</strong></span>
+    <button class="shrink-0 rounded-[9px] bg-[var(--om-danger)] px-4 font-semibold text-white" style="min-height: var(--om-tap)" onclick={() => { statusFilter = 'verify'; pageNo = 1; }}>{language.t('txVerify')}</button>
+  </div>
+{/if}
+</div>
 {/if}
 
 {#if error}
@@ -354,11 +389,11 @@
             <span class="text-[16px] font-bold tabular-nums">#{o.order_number}</span>
             {#if o.channel}<img src={CHANNEL_META[o.channel as keyof typeof CHANNEL_META]?.logo} alt={payOf(o)} class="h-[22px] w-auto max-w-[57px]" />{/if}
             <span class="flex min-w-0 flex-1 items-center gap-1 text-[12px] text-[var(--om-text-secondary)]"><span class="ms !text-[16px]">{sourceIcon(o)}</span><span class="truncate">{sourceLabel(o)} · {timeOf(o)}</span></span>
-            <span class="whitespace-nowrap rounded-full px-2.5 py-1 text-[12px] font-semibold" style="background:{st.tint};color:{st.fg}">{language.t(st.key)}</span>
+            <span class="whitespace-nowrap rounded-full px-2.5 py-1 text-[12px] font-semibold" style="background:{st.tint};color:{st.fg}">{stateLabel(st)}</span>
           </div>
           <div class="flex items-end gap-3">
             <div class="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span class="font-medium">{customerOf(o)} · {whereOf(o)}</span>
+              <span class="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">{@render nameOf(o)}{@render whereChip(o)}</span>
               <span class="truncate text-[12px] text-[var(--om-text-secondary)]">{itemsOf(o)}</span>
             </div>
             <div class="flex shrink-0 flex-col items-end gap-0.5"><span class="font-bold tabular-nums">{formatRupiah(o.total_amount)}</span><span class="text-[12px] text-[var(--om-text-secondary)]">{payOf(o)}</span></div>
@@ -370,7 +405,7 @@
   {:else}
     {#if legend.length}
       <div class="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[var(--om-text-secondary)]">
-        {#each legend as l (l.key)}<span class="flex items-center gap-1.5"><span class="h-3.5 w-3.5 rounded-[4px]" style="background:{l.tint};box-shadow: inset 3px 0 0 {l.fg}, inset 0 0 0 1px #D7D5CE"></span>{language.t(l.key)}</span>{/each}
+        {#each legend as l (stateLabel(l))}<span class="flex items-center gap-1.5"><span class="h-3.5 w-3.5 rounded-[4px]" style="background:{l.tint};box-shadow: inset 3px 0 0 {l.fg}, inset 0 0 0 1px #D7D5CE"></span>{stateLabel(l)}</span>{/each}
       </div>
     {/if}
     <div class="card overflow-auto">
@@ -383,7 +418,7 @@
           <div
             class="grid cursor-pointer grid-cols-[108px_100px_72px_120px_minmax(0,1.2fr)_minmax(0,1.4fr)_110px] items-center gap-3 border-b border-[var(--om-divider)] px-[18px] py-[13px] transition hover:brightness-[0.97]"
             style="min-height: var(--om-tap); background:{st.tint}; box-shadow: {selectedId === o.id ? 'inset 0 0 0 2px var(--om-ink), ' : ''}inset 4px 0 0 {st.fg}"
-            title={language.t(st.key)}
+            title={stateLabel(st)}
             role="button"
             tabindex="0"
             onclick={() => select(o.id)}
@@ -393,7 +428,7 @@
             <span class="flex items-center">{#if o.channel}<img src={CHANNEL_META[o.channel as keyof typeof CHANNEL_META]?.logo} alt={payOf(o)} class="h-[22px] w-auto max-w-[57px]" />{:else}<span class="text-[12px] font-medium text-[var(--om-ink-2)]">{o.payment_method}</span>{/if}</span>
             <span class="tabular-nums text-[var(--om-ink-2)]">{timeOf(o)}</span>
             <span class="flex items-center gap-1.5 text-[var(--om-ink-2)]"><span class="ms !text-[16px] text-[var(--om-text-secondary)]">{sourceIcon(o)}</span>{sourceLabel(o)}</span>
-            <div class="flex min-w-0 flex-col"><span class="truncate font-medium">{customerOf(o)}</span><span class="text-[12px] text-[var(--om-text-secondary)]">{whereOf(o)}</span></div>
+            <div class="flex min-w-0 flex-col items-start gap-1">{@render nameOf(o)}{@render whereChip(o)}</div>
             <span class="truncate text-[var(--om-ink-2)]">{itemsOf(o)}</span>
             <span class="text-right font-semibold tabular-nums">{formatRupiah(o.total_amount)}</span>
           </div>
@@ -417,7 +452,7 @@
     <div class="flex items-start justify-between border-b border-[var(--om-divider)] px-5 py-[18px]">
       <div class="flex min-w-0 flex-col gap-1">
         <span class="text-[20px] font-bold tabular-nums">#{o.order_number}</span>
-        <span class="text-[12px] text-[var(--om-text-secondary)]">{customerOf(o)} · {whereOf(o)} · {o.created_at ? formatDateTime(o.created_at) : ''}</span>
+        <span class="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-[var(--om-text-secondary)]">{@render nameOf(o)}{@render whereChip(o)}<span>{o.created_at ? formatDateTime(o.created_at) : ''}</span></span>
       </div>
       <a href={`/transactions/${o.id}`} class="inline-flex shrink-0 items-center justify-center rounded-[8px] text-[var(--om-text-secondary)] hover:bg-[var(--om-fill-muted)]" style="min-width: var(--om-tap); min-height: var(--om-tap)" aria-label={language.t('detail')} title={language.t('detail')}><span class="ms">open_in_new</span></a>
       <button class="inline-flex shrink-0 items-center justify-center rounded-[8px] text-[var(--om-text-secondary)] hover:bg-[var(--om-fill-muted)]" style="min-width: var(--om-tap); min-height: var(--om-tap)" aria-label={language.t('close')} onclick={() => (selectedId = null)}><span class="ms">close</span></button>
@@ -425,7 +460,7 @@
 
     <div class="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-5 py-4" style="grid-auto-rows: max-content">
       <div class="flex flex-wrap items-center gap-1.5">
-        <span class="rounded-full px-2.5 py-1 text-[12px] font-semibold" style="background:{st.tint};color:{st.fg}">{language.t(st.key)}</span>
+        <span class="rounded-full px-2.5 py-1 text-[12px] font-semibold" style="background:{st.tint};color:{st.fg}">{stateLabel(st)}</span>
         {#if o.channel}
           <span class="flex items-center gap-1.5 rounded-full bg-[var(--om-fill-muted)] py-[3px] pl-[3px] pr-2.5 text-[12px] font-bold">
             <img src={CHANNEL_META[o.channel as keyof typeof CHANNEL_META]?.logo} alt="" class="h-5 w-[52px] object-contain" />{payOf(o)}
@@ -477,6 +512,15 @@
             <span class="w-[26px] font-bold tabular-nums">{i.quantity}×</span>
             <div class="flex flex-1 flex-col gap-0.5"><span class="font-medium {leftOf(i) <= 0 ? 'line-through' : ''}">{i.item_name_snapshot}</span>{#if i.void_qty}<span class="text-[12px] text-[var(--om-danger)]">{i.void_qty} {language.t('txVoided')}</span>{/if}{#if mods}<span class="text-[12px] text-[var(--om-warning)]">{mods}</span>{/if}</div>
             <span class="text-[12px] tabular-nums">{formatRupiah(i.line_total ?? i.unit_price_snapshot * i.quantity)}</span>
+            {#if leftOf(i) > 0 && (o.status === 'OPEN' ? canManage : canRefund(o))}
+              <button
+                class="flex h-8 shrink-0 items-center gap-1 rounded-[8px] border border-red-200 bg-red-50 px-2.5 text-[12px] font-semibold text-[var(--om-danger)] hover:bg-red-100 disabled:opacity-40"
+                disabled={o.status === 'OPEN' && !canVoidOpen(o)}
+                title={o.status === 'OPEN' && !canVoidOpen(o) ? language.t('txVoidOpenLast') : language.t('txVoidItem')}
+                aria-label={`${language.t('txVoidItem')} ${i.item_name_snapshot}`}
+                onclick={() => openDialog('void', o, i.id)}
+              ><span class="ms !text-[16px]" aria-hidden="true">delete</span>{language.t('txVoid')}</button>
+            {/if}
           </div>
         {/each}
       </div>
@@ -496,7 +540,7 @@
             <div class="flex gap-2.5 border-t border-[#F4E2DE] py-2">
               <div class="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span class="text-[12px] font-semibold">{language.t(r.type === 'VOID' ? 'txRefundTypeVoid' : 'txRefundTypeRefund')}{r.quantity ? ` ×${r.quantity}` : ''}</span>
-                <span class="text-[12px] text-[var(--om-text-secondary)]">{formatDateTime(r.refunded_at)} · {language.t(r.method === 'CASH' ? 'txMethodCash' : 'txMethodTransfer')}</span>
+                <span class="text-[12px] text-[var(--om-text-secondary)]">{formatDateTime(r.refunded_at)} · {language.t(r.method === 'CASH' ? 'txMethodCash' : r.method === 'NONE' ? 'txMethodNone' : 'txMethodTransfer')}</span>
                 <span class="text-[12px] text-[var(--om-ink-2)]">{r.reason}</span>
               </div>
               <span class="whitespace-nowrap font-bold tabular-nums text-[var(--om-danger)]">−{formatRupiah(r.amount)}</span>
@@ -521,21 +565,27 @@
       </div>
       {#if canRefund(o)}
         <div class="flex w-full gap-2">
-          <button class="flex h-[46px] flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-[10px] border border-[var(--om-border)] bg-white px-3 font-semibold hover:border-[var(--om-brand)]" onclick={() => openDialog('void', o)}><span class="ms !text-[20px]">remove_shopping_cart</span>{language.t('txVoidItem')}</button>
           <button class="flex h-[46px] flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-[10px] border border-[var(--om-border)] bg-white px-3 font-semibold hover:border-[var(--om-brand)]" onclick={() => openDialog('refund', o)}><span class="ms !text-[20px]">currency_exchange</span>{language.t('txRefund')}</button>
         </div>
       {/if}
-      {#if o.status === 'PENDING' || o.status === 'CONFIRMED'}
+      {#if o.status === 'PENDING' || o.status === 'CONFIRMED' || o.status === 'OPEN'}
         <button
           class="flex h-[46px] flex-1 items-center justify-center gap-1.5 rounded-[10px] border bg-white px-3 font-semibold whitespace-nowrap disabled:opacity-50 {cancelArmed === o.id ? 'border-[var(--om-danger)] bg-[var(--om-danger)] text-white' : 'border-[var(--om-border)] text-[var(--om-danger)]'}"
           disabled={busy}
           onclick={() => (cancelArmed === o.id ? updateStatus(o, 'CANCELLED') : (cancelArmed = o.id))}
         ><span class="ms !text-[20px]">cancel</span>{cancelArmed === o.id ? language.t('txCancelSure') : language.t(o.status === 'PENDING' ? 'txReject' : 'txCancelOrder')}</button>
+        {#if o.status === 'OPEN'}
+          <button
+            class="flex h-[46px] flex-[2] items-center justify-center gap-1.5 rounded-[10px] border border-[var(--om-brand)] bg-[var(--om-brand)] px-3 font-semibold whitespace-nowrap text-white"
+            onclick={() => goto(`/pos?pay=${o.id}`)}
+          ><span class="ms !text-[20px]">payments</span>{language.t('obPay')}</button>
+        {:else}
         <button
           class="flex h-[46px] flex-[2] items-center justify-center gap-1.5 rounded-[10px] border border-[var(--om-brand)] bg-[var(--om-brand)] px-3 font-semibold whitespace-nowrap text-white disabled:opacity-50"
           disabled={busy}
           onclick={() => updateStatus(o, o.status === 'PENDING' ? 'CONFIRMED' : 'COMPLETED')}
         ><span class="ms !text-[20px]">{o.status === 'PENDING' ? 'task_alt' : 'done_all'}</span>{busy ? '…' : language.t(o.status === 'PENDING' ? 'txConfirmOrder' : 'txComplete')}</button>
+        {/if}
       {/if}
     </div>
   </aside>
@@ -570,6 +620,7 @@
           </label>
           <label class="block"><span class={label}>{language.t('txVoidQty')}</span><input class="field" type="text" inputmode="numeric" bind:value={dQty} /></label>
         {/if}
+        {#if o.status !== 'OPEN'}
         <div>
           <span class={label}>{language.t('txRefundMethod')}</span>
           <div class="flex flex-wrap gap-1.5">
@@ -578,6 +629,7 @@
           </div>
           {#if dMethod === 'CASH' && !hasShift}<div class="mt-1 text-xs text-[var(--om-danger)]">{language.t('txNeedShift')}</div>{/if}
         </div>
+        {/if}
         <div>
           <span class={label}>{language.t('txReason')}</span>
           <div class="flex flex-wrap gap-1.5">{#each REASONS as r}<button class={chip(dReason === r)} style="min-height: 40px" onclick={() => (dReason = r)}>{r}</button>{/each}</div>
@@ -586,7 +638,7 @@
       </div>
       <div class="flex items-center justify-end gap-3 border-t border-[var(--om-border)] p-5">
         <button class="btn-outline" onclick={() => (dialog = null)}>{language.t('cancel')}</button>
-        <button class="btn-primary disabled:opacity-50" disabled={dSaving || (dMethod === 'CASH' && !hasShift)} onclick={submitDialog}>{dSaving ? language.t('saving') : language.t(dialog.kind === 'refund' ? 'txRefund' : 'txVoidItem')}</button>
+        <button class="btn-primary disabled:opacity-50" disabled={dSaving || (o.status !== 'OPEN' && dMethod === 'CASH' && !hasShift)} onclick={submitDialog}>{dSaving ? language.t('saving') : language.t(dialog.kind === 'refund' ? 'txRefund' : 'txVoidItem')}</button>
       </div>
     </section>
   </div>

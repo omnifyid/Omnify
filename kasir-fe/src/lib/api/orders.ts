@@ -5,6 +5,7 @@ export type CartOrderItem = {
   quantity: number;
   optionChoiceIds?: string[];
   addonChoiceIds?: string[];
+  note?: string | null;
 };
 
 export function toOrderPayload(input: {
@@ -15,6 +16,9 @@ export function toOrderPayload(input: {
   orderType?: 'DINE_IN' | 'TAKE_AWAY' | null;
   tableNumber?: string | null;
   customerName?: string | null;
+  openBill?: boolean;
+  guestCount?: number | null;
+  segment?: string | null;
   notes?: string | null;
   channel?: OrderChannel | null;
   channelOrderId?: string | null;
@@ -30,11 +34,15 @@ export function toOrderPayload(input: {
       item_id: item.itemId,
       quantity: item.quantity,
       selected_option_choice_ids: item.optionChoiceIds ?? [],
-      selected_addon_choice_ids: item.addonChoiceIds ?? []
+      selected_addon_choice_ids: item.addonChoiceIds ?? [],
+      note: item.note?.trim() || null
     })),
     order_type: input.orderType ?? null,
     table_number: input.tableNumber ?? null,
     customer_name: input.customerName ?? null,
+    open_bill: input.openBill || undefined,
+    guest_count: input.guestCount ?? null,
+    segment: input.segment || null,
     notes: input.notes ?? null,
     channel: input.channel ?? null,
     channel_order_id: input.channelOrderId?.trim() || null,

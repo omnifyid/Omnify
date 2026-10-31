@@ -2,7 +2,7 @@
 
 ## Source of truth
 
-Design spec and prototype: `doc/new-ui/` (`README.md`, `tokens.css`, `Omnify.dc.html`). Tokens live in `kasir-fe/src/app.css` as `--om-*` variables; legacy names (`--espresso`, `--cream`, `--warm-brown`, `--border`, `--text-muted`, …) are aliases onto the same palette, so existing markup keeps working.
+Tokens live in `kasir-fe/src/app.css` as `--om-*` variables; legacy names (`--espresso`, `--cream`, `--warm-brown`, `--border`, `--text-muted`, …) are aliases onto the same palette, so existing markup keeps working.
 
 ## Fonts & icons
 

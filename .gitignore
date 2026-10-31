@@ -38,3 +38,6 @@ wheels/
 htmlcov/
 kasir-be/media/*
 !kasir-be/media/.gitkeep
+
+# design prototype
+new-ui/

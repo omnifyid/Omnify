@@ -2,7 +2,7 @@ export type Role = 'OWNER' | 'MANAGER' | 'OPERATOR';
 export type PaymentMethod = 'CASH' | 'CARD' | 'QRIS' | 'TRANSFER' | 'PLATFORM';
 export type OrderChannel = 'GOFOOD' | 'GRABFOOD' | 'SHOPEEFOOD';
 export type KitchenStatus = 'NEW' | 'COOKING' | 'READY' | 'SERVED';
-export type OrderStatus = 'PENDING' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED';
+export type OrderStatus = 'PENDING' | 'OPEN' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED';
 export type DiscountType = 'PERCENTAGE' | 'FIXED';
 export type DiscountScope = 'ORDER' | 'ITEM';
 export type DiscountTargetType = 'ALL' | 'CATEGORY' | 'ITEM';
@@ -103,12 +103,15 @@ export type OptionChoice = {
   name?: string;
   label?: string;
   is_default?: boolean;
+  extra_price?: number;
 };
 
 export type AddonGroup = {
   id: string;
   name?: string;
   label?: string;
+  is_required?: boolean;
+  required?: boolean;
   min_select?: number;
   max_select?: number | null;
   choices?: AddonChoice[];
@@ -121,6 +124,7 @@ export type AddonChoice = {
   label?: string;
   extra_price?: number;
   price?: number;
+  is_default?: boolean;
 };
 
 export type BranchSetting = { store_id: string; store_name: string; is_sold: boolean; is_parent?: boolean; price: number | null };
@@ -162,6 +166,8 @@ export type Order = {
   order_type?: 'DINE_IN' | 'TAKE_AWAY' | null;
   table_number?: string | null;
   customer_name?: string | null;
+  guest_count?: number | null;
+  segment?: string | null;
   kitchen_status?: KitchenStatus | null;
   channel?: OrderChannel | null;
   channel_order_id?: string | null;
@@ -192,6 +198,8 @@ export type Order = {
     item_discount_amount?: number | null;
     options_snapshot?: unknown[] | null;
     addons_snapshot?: unknown[] | null;
+    note?: string | null;
+    added_at?: string | null;
     is_done?: boolean;
     void_qty?: number;
   }>;
@@ -200,7 +208,7 @@ export type Order = {
 export type OrderRefund = {
   id: string;
   type: 'VOID' | 'REFUND';
-  method: 'CASH' | 'TRANSFER';
+  method: 'CASH' | 'TRANSFER' | 'NONE';
   amount: number;
   reason: string;
   quantity: number | null;

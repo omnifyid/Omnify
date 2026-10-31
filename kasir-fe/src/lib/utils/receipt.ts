@@ -102,6 +102,7 @@ export function customerReceipt(order: Order, store: StoreLike, o: ReceiptOption
     out.push({ t: 'row', left: `${item.item_name_snapshot} x${item.quantity}`, right: formatRupiah(item.line_total ?? 0) });
     const mods = [snapshotNames(item.options_snapshot), snapshotNames(item.addons_snapshot)].filter(Boolean).join(', ');
     if (o.show_mods && mods) out.push({ t: 'text', text: mods, muted: true, indent: true });
+    if (o.show_mods && item.note) out.push({ t: 'text', text: `“${item.note}”`, muted: true, indent: true });
     if ((item.item_discount_amount ?? 0) > 0) {
       out.push({ t: 'row', left: `  ${t('discounts')}`, right: `-${formatRupiah(item.item_discount_amount ?? 0)}`, accent: 'discount' });
     }
@@ -155,6 +156,7 @@ export function kitchenTicket(order: Order, store: StoreLike, o: ReceiptOptions)
     out.push({ t: 'text', text: `${left}x ${item.item_name_snapshot}`, bold: true });
     const mods = [snapshotNames(item.options_snapshot), snapshotNames(item.addons_snapshot)].filter(Boolean).join(', ');
     if (mods) out.push({ t: 'text', text: mods, muted: true, indent: true });
+    if (item.note) out.push({ t: 'text', text: `“${item.note}”`, muted: true, indent: true });
   }
   if (order.notes?.trim()) {
     out.push({ t: 'rule' });

@@ -75,6 +75,10 @@ Orders, discounts, packages, shifts, ingredients and finance records are scoped 
 - OrderItems snapshot name, price, options, addons at creation — receipts survive catalog changes
 - Client-supplied prices are ignored; prices always fetched from DB
 
+## Caching
+
+Redis (optional, `REDIS_URL`) caches the public self-order menu and the category list for 5 minutes; catalog writes clear them for every branch. Stock is never cached: the cached menu gets current stock from one query on each read.
+
 ## Key Commands
 
 ```bash

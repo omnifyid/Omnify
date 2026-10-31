@@ -2,7 +2,7 @@ import uuid
 
 from sqlalchemy import delete, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.models import (
@@ -79,8 +79,16 @@ async def business_cache_keys(store_id: uuid.UUID, db: AsyncSession) -> list[str
     ids = (await db.execute(select(Store.id).where(Store.business_id == business_of(store_id)))).scalars()
     keys: list[str] = []
     for sid in ids:
-        keys += [cache.menu_key(str(sid)), cache.items_key(str(sid)), cache.cats_key(str(sid))]
+        keys += [cache.menu_key(str(sid)), cache.cats_key(str(sid))]
     return keys
+
+
+async def live_stock(item_ids: list[uuid.UUID], db: AsyncSession) -> dict[str, int | None]:
+    """Current stock per item. Stock changes on every sale, so cached menus overlay it instead of caching it."""
+    if not item_ids:
+        return {}
+    rows = await db.execute(select(Item.id, Item.stock).where(Item.id.in_(item_ids)))
+    return {str(i): s for i, s in rows}
 
 
 async def effective_price(item: Item, store_id: uuid.UUID, db: AsyncSession) -> int:
@@ -115,6 +123,7 @@ async def list_items(
     search: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    include_groups: bool = True,
 ) -> tuple[list[Item], int]:
     base = select(Item).where(Item.business_id == business_of(store_id))
     if is_sold is True:
@@ -135,15 +144,15 @@ async def list_items(
 
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
-    q = (
-        base.options(
+    q = base.order_by(Item.sort_order, Item.name).limit(limit).offset(offset)
+    if include_groups:
+        q = q.options(
             selectinload(Item.option_groups).selectinload(OptionGroup.choices),
             selectinload(Item.addon_groups).selectinload(AddonGroup.choices),
         )
-        .order_by(Item.sort_order, Item.name)
-        .limit(limit)
-        .offset(offset)
-    )
+    else:
+        # the groups are not part of this response; keep them from lazy-loading during serialization
+        q = q.options(noload(Item.option_groups), noload(Item.addon_groups))
     result = await db.execute(q)
     items = list(result.scalars().all())
     await attach_store_view(items, store_id, db)
@@ -199,8 +208,21 @@ async def update_item(
     item = await _load_item(item_id, store_id, db)
     if payload.category_id:
         await _check_category(payload.category_id, store_id, db)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True, exclude={"option_groups", "addon_groups", "channel_prices"})
+    for key, value in changes.items():
         setattr(item, key, value)
+    if payload.channel_prices is not None:
+        await _replace_channel_prices(item_id, payload.channel_prices, db)
+    if payload.option_groups is not None:
+        await db.execute(delete(OptionGroup).where(OptionGroup.item_id == item_id))
+        await db.flush()
+        for og_data in payload.option_groups:
+            await _add_option_group(item_id, og_data, db)
+    if payload.addon_groups is not None:
+        await db.execute(delete(AddonGroup).where(AddonGroup.item_id == item_id))
+        await db.flush()
+        for ag_data in payload.addon_groups:
+            await _add_addon_group(item_id, ag_data, db)
     await db.commit()
     return await _load_item(item_id, store_id, db)
 
@@ -242,11 +264,7 @@ async def delete_item(item_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession)
     await db.commit()
 
 
-async def replace_channel_prices(
-    item_id: uuid.UUID, store_id: uuid.UUID, prices: dict[str, int | None], db: AsyncSession
-) -> Item:
-    await require_parent(store_id, db)
-    item = await _load_item(item_id, store_id, db)
+async def _replace_channel_prices(item_id: uuid.UUID, prices: dict[str, int | None], db: AsyncSession) -> None:
     valid = {c.value for c in OrderChannel}
     unknown = set(prices) - valid
     if unknown:
@@ -258,6 +276,14 @@ async def replace_channel_prices(
     for ch, price in prices.items():
         if price:
             db.add(ItemChannelPrice(item_id=item_id, channel=ch, price=price))
+
+
+async def replace_channel_prices(
+    item_id: uuid.UUID, store_id: uuid.UUID, prices: dict[str, int | None], db: AsyncSession
+) -> Item:
+    await require_parent(store_id, db)
+    item = await _load_item(item_id, store_id, db)
+    await _replace_channel_prices(item_id, prices, db)
     await db.commit()
     await db.refresh(item, ["channel_prices"])
     return item
@@ -298,7 +324,8 @@ async def _add_option_group(item_id: uuid.UUID, data: OptionGroupCreate, db: Asy
     for c in data.choices:
         db.add(
             OptionChoice(
-                group_id=og.id, label=c.label, is_default=c.is_default, sort_order=c.sort_order
+                group_id=og.id, label=c.label, is_default=c.is_default,
+                extra_price=c.extra_price, sort_order=c.sort_order
             )
         )
 
@@ -321,6 +348,7 @@ async def _add_addon_group(item_id: uuid.UUID, data: AddonGroupCreate, db: Async
                 label=c.label,
                 extra_price=c.extra_price,
                 is_available=c.is_available,
+                is_default=c.is_default,
                 sort_order=c.sort_order,
             )
         )

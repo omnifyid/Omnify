@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -22,7 +22,9 @@ from app.models.refund import OrderRefund, RefundMethod, RefundType
 from app.schemas.store import PaymentOptions
 from app.schemas.order import (
     CartItemIn,
+    OrderAddItems,
     OrderCreate,
+    OrderPay,
     OrderPreviewRequest,
     RefundCreate,
     VoidCreate,
@@ -59,6 +61,7 @@ def _state_cond(state: str):
     in_kitchen = Order.kitchen_status.in_([KitchenStatus.NEW, KitchenStatus.COOKING])
     return {
         "verify": Order.status == OrderStatus.PENDING,
+        "open": Order.status == OrderStatus.OPEN,
         "kitchen": (Order.status == OrderStatus.CONFIRMED) & in_kitchen,
         "ready": (Order.status == OrderStatus.CONFIRMED) & (Order.kitchen_status == KitchenStatus.READY),
         "confirmed": (Order.status == OrderStatus.CONFIRMED)
@@ -78,19 +81,24 @@ def _order_conds(
     search: str | None = None,
     kind: str | None = None,
     state: str | None = None,
+    include_open: bool = False,
 ) -> list:
     conds = [Order.store_id == store_id]
     if status:
         conds.append(Order.status == status)
     if payment_method:
         conds.append(Order.payment_method == payment_method)
+    in_period = []
     if date_from:
-        conds.append(Order.created_at >= datetime(date_from.year, date_from.month, date_from.day))
+        in_period.append(Order.created_at >= datetime(date_from.year, date_from.month, date_from.day))
     if date_to:
-        conds.append(
+        in_period.append(
             Order.created_at
             < datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1)
         )
+    if in_period:
+        # unpaid open bills stay visible whatever the period, they are still running
+        conds.append(or_(and_(*in_period), Order.status == OrderStatus.OPEN) if include_open else and_(*in_period))
     if operator_id:
         conds.append(Order.operator_id == operator_id)
     if search and search.strip():
@@ -125,9 +133,10 @@ async def list_orders(
     search: str | None = None,
     kind: str | None = None,
     state: str | None = None,
+    include_open: bool = False,
 ) -> tuple[list[Order], int]:
     conds = _order_conds(
-        store_id, status, payment_method, date_from, date_to, operator_id, search, kind, state
+        store_id, status, payment_method, date_from, date_to, operator_id, search, kind, state, include_open
     )
     total = (await db.execute(select(func.count()).select_from(Order).where(*conds))).scalar_one()
     q = (
@@ -180,6 +189,8 @@ async def create_order(
     4. Calculate totals with integer arithmetic
     5. Write Order + OrderItems in one transaction
     """
+    if getattr(payload, "open_bill", False) and operator_id is not None and not payload.channel:
+        initial_status = OrderStatus.OPEN
     async with db.begin_nested():  # savepoint; outer session commits
         if not (await db.execute(select(Store.is_open).where(Store.id == store_id))).scalar_one_or_none():
             raise BadRequestError("Outlet is closed")
@@ -238,6 +249,7 @@ async def create_order(
                 )
             else:
                 line = await _process_package_line(store_id, cart_item, db, addon_map, markup_bp)
+            line["note"] = (cart_item.note or "").strip() or None
             line_results.append(line)
 
         # --- Apply automatic ITEM-scope discounts ---
@@ -365,13 +377,13 @@ async def create_order(
             tax_amount = channel_service.included_tax(total_amount, tax_bp)
 
         cash_received = None
-        if payload.cash_received is not None and payload.payment_method == PaymentMethod.CASH and not channel:
+        if payload.cash_received is not None and payload.payment_method == PaymentMethod.CASH and not channel and initial_status != OrderStatus.OPEN:
             if payload.cash_received < total_amount:
                 raise BadRequestError("Cash received is less than the total")
             cash_received = payload.cash_received
 
         payment_provider = None
-        if not channel and operator_id is not None:  # staff POS only; QR self-orders are always cash
+        if not channel and operator_id is not None and initial_status != OrderStatus.OPEN:  # staff POS only; QR self-orders are always cash
             payment_provider = await _check_payment_method(store_id, payload, db)
 
         # Write Order
@@ -393,6 +405,8 @@ async def create_order(
             order_type=getattr(payload, "order_type", None),
             table_number=getattr(payload, "table_number", None),
             customer_name=getattr(payload, "customer_name", None),
+            guest_count=getattr(payload, "guest_count", None),
+            segment=(getattr(payload, "segment", None) or "").strip() or None,
             status=initial_status,
             channel=channel,
             channel_order_id=channel_order_id,
@@ -409,7 +423,7 @@ async def create_order(
             ),
             kitchen_status=(
                 KitchenStatus.NEW
-                if kitchen_enabled and initial_status == OrderStatus.CONFIRMED
+                if kitchen_enabled and initial_status in (OrderStatus.CONFIRMED, OrderStatus.OPEN)
                 else None
             ),
         )
@@ -431,6 +445,7 @@ async def create_order(
                     line_total=line["line_total"],
                     options_snapshot=line.get("options_snapshot"),
                     addons_snapshot=line.get("addons_snapshot"),
+                    note=line.get("note"),
                 )
             )
         db.add_all(order_items)
@@ -491,7 +506,12 @@ async def _process_item_line(
         oc = option_map.get(choice_id)
         if not oc:
             raise BadRequestError(f"Option choice {choice_id} not found")
-        options_snapshot.append({"label": oc.label, "group_id": str(oc.group_id)})
+        extra = channel_service.ceil_markup(oc.extra_price, markup_bp) if oc.extra_price else 0
+        addon_total += extra
+        entry = {"label": oc.label, "group_id": str(oc.group_id)}
+        if extra:
+            entry["extra_price"] = extra
+        options_snapshot.append(entry)
 
     for choice_id in cart_item.selected_addon_choice_ids:
         ac = addon_map.get(choice_id)
@@ -572,6 +592,7 @@ async def _process_package_line(
 # CANCELLED and COMPLETED are final; paid orders are corrected with void/refund, never reopened.
 ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     OrderStatus.PENDING: {OrderStatus.CONFIRMED, OrderStatus.COMPLETED, OrderStatus.CANCELLED},
+    OrderStatus.OPEN: {OrderStatus.CANCELLED},  # becomes CONFIRMED only through pay_order
     OrderStatus.CONFIRMED: {OrderStatus.COMPLETED, OrderStatus.CANCELLED},
     OrderStatus.COMPLETED: set(),
     OrderStatus.CANCELLED: set(),
@@ -606,6 +627,118 @@ async def update_order_status(
     return await _load_order(order_id, store_id, db)
 
 
+async def add_items(
+    order_id: uuid.UUID, store_id: uuid.UUID, payload: OrderAddItems, db: AsyncSession
+) -> Order:
+    """Adds lines to an open bill. Earlier lines are untouched; the kitchen ticket gets the new lines marked as added.
+    Discounts are not applied to added lines; the service charge and PB1 are recomputed on the new net amount."""
+    async with db.begin_nested():
+        await db.execute(
+            select(Order.id).where(Order.id == order_id, Order.store_id == store_id).with_for_update()
+        )
+        order = await _load_order(order_id, store_id, db)
+        if order.status != OrderStatus.OPEN:
+            raise BadRequestError("Items can only be added to an open bill")
+        if not (await db.execute(select(Store.is_open).where(Store.id == store_id))).scalar_one_or_none():
+            raise BadRequestError("Outlet is closed")
+
+        option_ids = [cid for ci in payload.items for cid in ci.selected_option_choice_ids]
+        addon_ids = [cid for ci in payload.items for cid in ci.selected_addon_choice_ids]
+        option_map: dict[uuid.UUID, OptionChoice] = {}
+        addon_map: dict[uuid.UUID, AddonChoice] = {}
+        if option_ids:
+            rows = (await db.execute(select(OptionChoice).where(OptionChoice.id.in_(option_ids)))).scalars()
+            option_map = {r.id: r for r in rows}
+        if addon_ids:
+            rows = (
+                await db.execute(
+                    select(AddonChoice).where(AddonChoice.id.in_(addon_ids), AddonChoice.is_available.is_(True))
+                )
+            ).scalars()
+            addon_map = {r.id: r for r in rows}
+
+        lines = []
+        for cart_item in payload.items:
+            if cart_item.item_id:
+                line = await _process_item_line(store_id, cart_item, db, option_map, addon_map)
+            else:
+                line = await _process_package_line(store_id, cart_item, db, addon_map, 0)
+            line["note"] = (cart_item.note or "").strip() or None
+            lines.append(line)
+
+        added = sum(line["line_total"] for line in lines)
+        service_bp, pb1_bp = (
+            await db.execute(select(Store.service_bp, Store.pb1_bp).where(Store.id == store_id))
+        ).one()
+        net = order.total_amount - order.service_amount - order.pb1_amount + added
+        service, pb1 = direct_order_fees(net, order.order_type == "DINE_IN", service_bp, pb1_bp)
+        order.subtotal += added
+        order.service_amount, order.pb1_amount = service, pb1
+        order.total_amount = net + service + pb1
+
+        now = datetime.now(UTC)
+        new_items = [
+            OrderItem(
+                order_id=order.id,
+                item_id=line.get("item_id"),
+                package_id=line.get("package_id"),
+                item_name_snapshot=line["name"],
+                unit_price_snapshot=line["unit_price"],
+                quantity=line["quantity"],
+                addon_total_snapshot=line["addon_total"],
+                item_discount_amount=0,
+                line_total=line["line_total"],
+                options_snapshot=line.get("options_snapshot"),
+                addons_snapshot=line.get("addons_snapshot"),
+                note=line.get("note"),
+                added_at=now,
+            )
+            for line in lines
+        ]
+        db.add_all(new_items)
+        await db.flush()
+        await inventory_service.deduct_for_order(store_id, order.id, order.order_number, new_items, db)
+        for line in lines:
+            if line.get("_stock_item") is not None:
+                line["_stock_item"].stock -= line["quantity"]
+
+        if order.kitchen_status is not None:
+            order.kitchen_status = KitchenStatus.NEW  # back to the new column so the kitchen sees the addition
+        changes = payload.model_dump(exclude_unset=True, exclude={"items"})
+        for key in ("table_number", "customer_name", "guest_count"):
+            if key in changes:
+                setattr(order, key, changes[key])
+        if "segment" in changes:
+            order.segment = (changes["segment"] or "").strip() or None
+    await db.commit()
+    return await _load_order(order_id, store_id, db)
+
+
+async def pay_order(
+    order_id: uuid.UUID, store_id: uuid.UUID, payload: OrderPay, db: AsyncSession
+) -> Order:
+    """Settles an open bill: records the payment and confirms the order. The kitchen flow is untouched."""
+    await db.execute(
+        select(Order.id).where(Order.id == order_id, Order.store_id == store_id).with_for_update()
+    )
+    order = await _load_order(order_id, store_id, db)
+    if order.status != OrderStatus.OPEN:
+        raise BadRequestError("Only an open bill can be paid here")
+    provider = await _check_payment_method(store_id, payload, db)
+    if payload.cash_received is not None and payload.payment_method == PaymentMethod.CASH:
+        if payload.cash_received < order.total_amount:
+            raise BadRequestError("Cash received is less than the total")
+        order.cash_received = payload.cash_received
+    else:
+        order.cash_received = None
+    order.payment_method = payload.payment_method
+    order.payment_provider = provider
+    order.status = OrderStatus.CONFIRMED
+    order.confirmed_at = datetime.now(UTC)
+    await db.commit()
+    return await _load_order(order_id, store_id, db)
+
+
 async def _refundable_order(order_id, store_id, db) -> Order:
     """Locks the order row, then loads it; only paid direct orders can be refunded."""
     await db.execute(select(Order.id).where(Order.id == order_id, Order.store_id == store_id).with_for_update())
@@ -621,6 +754,8 @@ async def _record_refund(
     order: Order, store_id, user_id, rtype: RefundType, method: RefundMethod, amount: int,
     reason: str, db, item=None, qty: int | None = None,
 ) -> None:
+    if method == RefundMethod.NONE:
+        raise BadRequestError("Choose CASH or TRANSFER")
     if amount <= 0 or amount > order.total_amount - order.refunded_amount:
         raise BadRequestError("Refund amount exceeds what is left on the order")
     if method == RefundMethod.CASH:
@@ -652,7 +787,57 @@ async def refund_order(order_id, store_id, user_id, payload: RefundCreate, db) -
     return await _load_order(order_id, store_id, db)
 
 
+async def _void_open_bill_item(order: Order, store_id, item_id, user_id, payload: VoidCreate, db) -> None:
+    """Takes units off an unpaid line: total shrinks, ingredients return, the log records it (no money moves)."""
+    item = next((i for i in order.items if i.id == item_id), None)
+    if not item:
+        raise NotFoundError("Order item not found")
+    if payload.quantity > item.quantity - item.void_qty:
+        raise BadRequestError("Quantity exceeds what is left on this line")
+    if sum(i.quantity - i.void_qty for i in order.items) - payload.quantity <= 0:
+        raise BadRequestError("Every item would be voided; cancel the bill instead")
+    before = item.line_total * item.void_qty // item.quantity
+    after = item.line_total * (item.void_qty + payload.quantity) // item.quantity
+    amount = after - before
+    service_bp, pb1_bp = (
+        await db.execute(select(Store.service_bp, Store.pb1_bp).where(Store.id == store_id))
+    ).one()
+    net = max(order.total_amount - order.service_amount - order.pb1_amount - amount, 0)
+    service, pb1 = direct_order_fees(net, order.order_type == "DINE_IN", service_bp, pb1_bp)
+    order.subtotal = max(order.subtotal - amount, 0)
+    order.service_amount, order.pb1_amount = service, pb1
+    order.total_amount = net + service + pb1
+    item.void_qty += payload.quantity
+    if item.item_id:
+        tracked = (await db.execute(select(Item).where(Item.id == item.item_id).with_for_update())).scalar_one_or_none()
+        if tracked is not None and tracked.stock is not None:
+            tracked.stock += payload.quantity
+    await inventory_service.restore_for_item(store_id, order.id, order.order_number, item.item_id, payload.quantity, db)
+    db.add(
+        OrderRefund(
+            order_id=order.id,
+            store_id=store_id,
+            user_id=user_id,
+            type=RefundType.VOID.value,
+            method=RefundMethod.NONE.value,
+            amount=amount,
+            reason=payload.reason.strip(),
+            order_item_id=item.id,
+            quantity=payload.quantity,
+            refunded_at=datetime.now(UTC),
+        )
+    )
+
+
 async def void_item(order_id, store_id, item_id, user_id, payload: VoidCreate, db) -> Order:
+    await db.execute(select(Order.id).where(Order.id == order_id, Order.store_id == store_id).with_for_update())
+    current = await _load_order(order_id, store_id, db)
+    if current.status == OrderStatus.OPEN:
+        await _void_open_bill_item(current, store_id, item_id, user_id, payload, db)
+        await db.commit()
+        return await _load_order(order_id, store_id, db)
+    if payload.method is None:
+        raise BadRequestError("Refund method is required")
     order = await _refundable_order(order_id, store_id, db)
     item = next((i for i in order.items if i.id == item_id), None)
     if not item:
@@ -680,7 +865,7 @@ async def list_kitchen_orders(
     """Confirmed orders still in the kitchen flow, oldest first."""
     cond = (
         Order.store_id == store_id,
-        Order.status == OrderStatus.CONFIRMED,
+        Order.status.in_([OrderStatus.CONFIRMED, OrderStatus.OPEN]),
         Order.kitchen_status.in_(
             [KitchenStatus.NEW, KitchenStatus.COOKING, KitchenStatus.READY]
         ),

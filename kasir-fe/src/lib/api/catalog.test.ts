@@ -59,3 +59,20 @@ describe('toOptionGroupsPayload', () => {
     ]);
   });
 });
+
+import { toModifierPayloads } from './catalog';
+
+describe('toModifierPayloads', () => {
+  it('splits single-choice groups into options and multi-choice groups into add-ons', () => {
+    const out = toModifierPayloads([
+      { name: 'Ukuran', required: true, multi: false, max: null, choices: [{ name: 'Reguler', extra_price: 0, is_default: true }, { name: 'Besar', extra_price: 6000, is_default: false }] },
+      { name: 'Topping', required: false, multi: true, max: 2, choices: [{ name: 'Boba', extra_price: 5000, is_default: false }, { name: ' ', extra_price: 0, is_default: false }] },
+      { name: '', required: false, multi: false, max: null, choices: [] }
+    ]);
+    expect(out.option_groups).toHaveLength(1);
+    expect(out.option_groups[0].choices[1]).toMatchObject({ label: 'Besar', extra_price: 6000 });
+    expect(out.addon_groups).toEqual([
+      { name: 'Topping', is_required: false, min_select: 0, max_select: 2, sort_order: 0, choices: [{ label: 'Boba', extra_price: 5000, is_default: false, sort_order: 0 }] }
+    ]);
+  });
+});

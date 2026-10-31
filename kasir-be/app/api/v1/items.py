@@ -38,41 +38,13 @@ async def list_items(
     search: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    include_groups: bool = True,  # option/add-on groups; list screens that only show rows can skip them
     _: StoreMembership = Depends(AnyMember),
     db: AsyncSession = Depends(get_db),
 ):
-    use_cache = (
-        not search
-        and is_available is None
-        and not stock_out
-        and is_sold is None
-        and not category_id
-        and not available_only
-        and offset == 0
-    )
-    if use_cache:
-        cached = await cache.get(cache.items_key(str(store_id)))
-        if cached is not None:
-            return {
-                "items": cached["items"][:limit],
-                "total": cached["total"],
-                "limit": limit,
-                "offset": 0,
-            }
-
     items, total = await item_service.list_items(
-        store_id, db, category_id, available_only, is_available, stock_out, is_sold, search, limit, offset
+        store_id, db, category_id, available_only, is_available, stock_out, is_sold, search, limit, offset, include_groups
     )
-
-    if use_cache and limit >= 500:
-        await cache.set(
-            cache.items_key(str(store_id)),
-            {
-                "items": [ItemRead.model_validate(i).model_dump(mode="json") for i in items],
-                "total": total,
-            },
-            cache.MENU_TTL,
-        )
 
     return PaginatedResponse(items=items, total=total, limit=limit, offset=offset)
 

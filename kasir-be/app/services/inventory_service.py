@@ -269,18 +269,8 @@ async def set_recipe(
     return await get_recipe(item_id, store_id, db)
 
 
-async def deduct_for_order(
-    store_id: uuid.UUID, order_id: uuid.UUID, order_number: str, lines: list[OrderItem], db: AsyncSession
-) -> None:
-    """Deduct recipe ingredients for a new order. Stock may go negative; sales are never blocked."""
-    if not (await db.execute(select(Store.inventory_enabled).where(Store.id == store_id))).scalar_one():
-        return  # inventory module is off for this store
-    qty_by_item: dict[uuid.UUID, int] = defaultdict(int)
-    for l in lines:
-        if l.item_id:
-            qty_by_item[l.item_id] += l.quantity
-    if not qty_by_item:
-        return
+async def _need_for(store_id: uuid.UUID, qty_by_item: dict[uuid.UUID, int], db: AsyncSession) -> dict[uuid.UUID, Decimal]:
+    """Ingredient quantities the given item quantities use (a branch uses the parent's recipe, matched by name)."""
     recipe = (
         await db.execute(select(RecipeLine).where(RecipeLine.item_id.in_(qty_by_item)))
     ).unique().scalars().all()
@@ -289,7 +279,6 @@ async def deduct_for_order(
         for r in recipe:
             need[r.ingredient_id] += r.quantity * qty_by_item[r.item_id]
     else:
-        # a branch uses the parent's recipe against its own ingredients, matched by name
         by_name: dict[str, Decimal] = defaultdict(Decimal)
         for r in recipe:
             by_name[r.ingredient.name.lower()] += r.quantity * qty_by_item[r.item_id]
@@ -303,6 +292,22 @@ async def deduct_for_order(
             ).scalars().all()
             for ing in own:
                 need[ing.id] += by_name[ing.name.lower()]
+    return need
+
+
+async def deduct_for_order(
+    store_id: uuid.UUID, order_id: uuid.UUID, order_number: str, lines: list[OrderItem], db: AsyncSession
+) -> None:
+    """Deduct recipe ingredients for a new order. Stock may go negative; sales are never blocked."""
+    if not (await db.execute(select(Store.inventory_enabled).where(Store.id == store_id))).scalar_one():
+        return  # inventory module is off for this store
+    qty_by_item: dict[uuid.UUID, int] = defaultdict(int)
+    for l in lines:
+        if l.item_id:
+            qty_by_item[l.item_id] += l.quantity
+    if not qty_by_item:
+        return
+    need = await _need_for(store_id, qty_by_item, db)
     if not need:
         return
     ings = (
@@ -312,6 +317,24 @@ async def deduct_for_order(
     ).scalars().all()
     for ing in ings:
         _move(db, ing, -need[ing.id], MovementType.SALE, f"Order {order_number}", order_id=order_id)
+
+
+async def restore_for_item(
+    store_id: uuid.UUID, order_id: uuid.UUID, order_number: str, item_id: uuid.UUID | None, quantity: int, db: AsyncSession
+) -> None:
+    """Return the ingredients of `quantity` units of one item taken off an open bill."""
+    if not item_id or not (await db.execute(select(Store.inventory_enabled).where(Store.id == store_id))).scalar_one():
+        return
+    need = await _need_for(store_id, {item_id: quantity}, db)
+    if not need:
+        return
+    ings = (
+        await db.execute(
+            select(Ingredient).where(Ingredient.id.in_(need)).order_by(Ingredient.id).with_for_update()
+        )
+    ).scalars().all()
+    for ing in ings:
+        _move(db, ing, need[ing.id], MovementType.RETURN, f"Void {order_number}", order_id=order_id)
 
 
 async def restore_for_order(
@@ -325,12 +348,14 @@ async def restore_for_order(
             )
         )
     ).unique().scalars().all()
-    if any(m.type == MovementType.RETURN.value for m in moves):
-        return
+    # net of earlier partial returns (voided lines), so this is safe to call twice
     sold: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
     for m in moves:
         if m.type == MovementType.SALE.value:
             sold[m.ingredient_id] += -m.quantity
+        elif m.type == MovementType.RETURN.value:
+            sold[m.ingredient_id] -= m.quantity
+    sold = {k: v for k, v in sold.items() if v > 0}
     if not sold:
         return
     ings = (

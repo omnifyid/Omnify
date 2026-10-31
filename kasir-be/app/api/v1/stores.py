@@ -84,7 +84,7 @@ async def update_store(
         raise ForbiddenError("Only the owner can change tax, service charge and shift cash settings")
     result = await store_service.update_store(store_id, changes, db)
     s = str(store_id)
-    await cache.delete(cache.menu_key(s), cache.items_key(s), cache.cats_key(s))
+    await cache.delete(cache.menu_key(s), cache.cats_key(s))
     return result
 
 
@@ -106,7 +106,7 @@ async def upload_store_logo(
     logo_url = f"/media/store_{store_id}.{ext}"
     result = await store_service.set_store_logo(store_id, logo_url, db)
     s = str(store_id)
-    await cache.delete(cache.menu_key(s), cache.items_key(s), cache.cats_key(s))
+    await cache.delete(cache.menu_key(s), cache.cats_key(s))
     return result
 
 

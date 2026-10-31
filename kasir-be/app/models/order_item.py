@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -34,6 +35,9 @@ class OrderItem(Base):
     options_snapshot: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # [{"group": "Extras", "label": "Extra Shot", "extra_price": 5000}]
     addons_snapshot: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)  # custom note typed by the cashier
+    # set when the line was added to an open bill after the first kitchen ticket
+    added_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # kitchen checklist: line has been prepared
     is_done: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

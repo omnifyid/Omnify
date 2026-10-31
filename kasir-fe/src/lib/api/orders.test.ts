@@ -24,12 +24,15 @@ describe('toOrderPayload', () => {
           item_id: 'item-1',
           quantity: 2,
           selected_option_choice_ids: ['less-sugar'],
-          selected_addon_choice_ids: ['extra-shot']
+          selected_addon_choice_ids: ['extra-shot'],
+          note: null
         }
       ],
       order_type: null,
       table_number: null,
       customer_name: null,
+      guest_count: null,
+      segment: null,
       notes: null,
       channel: null,
       channel_order_id: null,

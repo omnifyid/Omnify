@@ -62,6 +62,10 @@ async def get_public_menu(
     key = cache.menu_key(str(store_id))
     cached = await cache.get(key)
     if cached is not None:
+        # the menu is cached, stock is not: it changes with every sale
+        stock = await item_service.live_stock([uuid.UUID(i["id"]) for i in cached["items"]], db)
+        for i in cached["items"]:
+            i["stock"] = stock.get(i["id"], i["stock"])
         return cached
 
     store = await _get_active_store(store_id, db)

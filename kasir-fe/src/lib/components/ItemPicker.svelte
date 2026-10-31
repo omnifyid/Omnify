@@ -10,8 +10,9 @@
   let {
     id,
     value = $bindable(''),
-    name = $bindable('')
-  }: { id?: string; value: string; name: string } = $props();
+    name = $bindable(''),
+    placeholder = ''
+  }: { id?: string; value: string; name: string; placeholder?: string } = $props();
 
   let query = $state('');
   let results = $state<Item[]>([]);
@@ -22,7 +23,7 @@
     const storeId = session.selectedStore?.id;
     if (!storeId) return;
     try {
-      const q = new URLSearchParams({ limit: '8' });
+      const q = new URLSearchParams({ limit: '8', include_groups: 'false' });
       if (query.trim()) q.set('search', query.trim());
       results = paginatedItems(await api.get<PaginatedResponse<Item>>(`/stores/${storeId}/items?${q}`));
     } catch {
@@ -54,7 +55,7 @@
   </div>
 {:else}
   <div class="relative">
-    <input {id} class="field" placeholder={language.t('selectItem')} autocomplete="off" bind:value={query} onfocus={() => { open = true; }} onblur={() => setTimeout(() => (open = false), 150)} />
+    <input {id} class="field" placeholder={placeholder || language.t('selectItem')} autocomplete="off" bind:value={query} onfocus={() => { open = true; }} onblur={() => setTimeout(() => (open = false), 150)} />
     {#if open && results.length}
       <div class="absolute left-0 right-0 top-full z-10 mt-1 max-h-60 overflow-y-auto rounded-xl border border-[var(--border)] bg-white shadow-lg">
         {#each results as item (item.id)}

@@ -8,11 +8,32 @@
 4. Confirm → order created atomically in DB
 5. Receipt shown; order moves to COMPLETED
 
+## Order Details (Kasir)
+
+The nav item `/pos` is labelled **Kasir**. The cart has a collapsible order-detail row (table, customer name, head count, segment) and a note button on every cart line. `guest_count` (default 1) and `segment` are optional on `POST /orders`; each cart item accepts `note`.
+
+- Item cards show price on the left and "Pilih opsi" on the right when the product has options. Options and add-ons open a compact modal with a **Custom** note pill (max 80 characters, printed on the receipt and kitchen ticket); tapping a cart line also edits its note.
+- Required groups (options, and add-ons with `is_required`/`min_select > 0`) must be filled before the item enters the cart; an add-on group with `max_select` swaps out the oldest pick when the limit is reached. Choices flagged `is_default` are preselected.
+- The cart footer ends with the total and **Bayar**, which opens one payment modal. Its tiles follow Settings → Pembayaran: one per enabled method, and one per EDC bank / QRIS provider when options are set. Cash shows amount received, quick amounts and change.
+
 ## Order Status
 
-`PENDING` → `CONFIRMED` → `COMPLETED` | `CANCELLED`
+`PENDING` → `CONFIRMED` → `COMPLETED` | `CANCELLED`; open bills use `OPEN` → `CONFIRMED` (see Open Bill).
 
 Allowed transitions (enforced by `PATCH /orders/{id}/status`, row locked): `PENDING` → `CONFIRMED`/`COMPLETED`/`CANCELLED`; `CONFIRMED` → `COMPLETED`/`CANCELLED`; `COMPLETED` and `CANCELLED` are final. An order with refunds (`refunded_amount > 0`) or a recorded platform payout (`settlement_id`) cannot be cancelled.
+
+## Open Bill
+
+The cashier can save the cart as an **open bill** (button next to Bayar, not for online platform orders) and take payment later.
+
+- `POST /orders` with `open_bill: true` creates the order with status `OPEN`: no payment method is needed (`CASH` is stored as a placeholder), and the kitchen ticket starts immediately (`kitchen_status = NEW`). Stock and ingredients are deducted at creation. `confirmed_at` stays empty, so reports, shifts and expected cash count the order only once it is paid.
+- `POST /orders/{id}/pay` `{payment_method, payment_provider?, cash_received?}` (any member) validates the payment against Settings → Pembayaran, then sets `CONFIRMED` with `confirmed_at = now`. Only an `OPEN` order can be paid; `PLATFORM` is rejected.
+- `POST /orders/{id}/items` `{items[], table_number?, customer_name?, guest_count?, segment?}` adds lines to an `OPEN` bill (any member). Earlier lines never change. New lines get `order_items.added_at`; the kitchen ticket is the same one, with a **BARU** tag on added lines until they are checked off, and a ticket that was cooking/ready/served returns to the new column. Added lines get no discount; subtotal, service charge and PB1 are recomputed on the new net amount, and stock/ingredients are deducted for them. Table, customer name and guest count can be corrected in the same call. In Kasir, **Tambah** on an open bill row loads it above the cart (earlier lines locked) and **Simpan tambahan** saves; items already in the cart are included.
+- **Void item on an open bill** (Owner/Manager, `POST /orders/{id}/items/{iid}/void` `{quantity, reason}`, no method): the line's proportional share leaves the bill, so `subtotal`, service, PB1 and `total_amount` shrink (and `refunded_amount` stays 0); `void_qty` rises; tracked item stock and the recipe's ingredients return (`RETURN` movement "Void …"). It is written to the same `order_refunds` log as `type = VOID`, `method = NONE` (no money moved), with user and reason, so it shows in the Transactions drawer under the refunds and is never shown as cash out in a shift. The last remaining unit cannot be voided: cancel the bill. The kitchen ticket shows the line as **BATAL ×n**. Cancelling the bill afterwards returns only the ingredients not already returned.
+- Where to void: every item row in the Transactions drawer has its own **Void** button (open bills and paid orders; the bottom "Void item" button no longer exists), and in Kasir the locked lines of "Tambah ke #…" have one for open bills (Owner/Manager).
+- Paid lines are voided with the refund flow ([Void & Refund](#void--refund)).
+- An open bill can only be cancelled (`PATCH /status` → `CANCELLED`), which restores ingredient stock.
+- `GET /orders?status=OPEN` lists them (also `state=open`). The Kasir cart header has a receipt button with the count; it opens the list (search by name, table or number) and each row has **Bayar**, which opens the payment modal for that bill. Transactions has an "Open bill" filter; its drawer offers Batalkan and Bayar (`/pos?pay={id}`).
 
 ## Payment Methods
 
@@ -71,7 +92,7 @@ Two print paths, both triggered from the receipt modal after checkout:
 - Status chips: all, needs verification (`PENDING`), in kitchen / ready (only when kitchen management is on), confirmed, completed, cancelled. A banner above the toolbar links to the `PENDING` filter when self-orders are waiting.
 - Filtering, search and paging (20 per page) happen on the server: `GET /orders` accepts `search` (order no., platform ID, customer, notes), `kind` (`dine`/`take`/`online`) and `state` (`verify`/`kitchen`/`ready`/`confirmed`/`done`/`cancelled`) besides the date range. Status chips show no counts. The banner count is one `status=PENDING&limit=1` request. The page refreshes every 30 s.
 - List rows are tinted per state with a colored left bar; grid shows one card per order.
-- Clicking an order opens a drawer like new-ui: 370px panel that pushes the list on wide screens (≥1200px) and overlays it below that. It shows status and platform chips, the platform payout box for online orders (gross, commission, expected payout, estimated or paid-out date, app-total mismatch), a progress bar (steps depend on POS / QR / online source and kitchen status), items with options and add-ons, subtotal / discount / total, and a paid line. Footer: Struk (opens the receipt on the detail page), Detail, and the status actions (Konfirmasi or Tolak for `PENDING`; Selesaikan or Batalkan for `CONFIRMED`, cancel needs a second click).
+- Clicking an order opens a drawer: 370px panel that pushes the list on wide screens (≥1200px) and overlays it below that. It shows status and platform chips, the platform payout box for online orders (gross, commission, expected payout, estimated or paid-out date, app-total mismatch), a progress bar (steps depend on POS / QR / online source and kitchen status), items with options and add-ons, subtotal / discount / total, and a paid line. Footer: Struk (opens the receipt on the detail page), Detail, and the status actions (Konfirmasi or Tolak for `PENDING`; Selesaikan or Batalkan for `CONFIRMED`, cancel needs a second click).
 - Order state label: `PENDING` → needs verification; `CONFIRMED` → kitchen status (new / preparing / ready) or confirmed; `COMPLETED`; `CANCELLED`.
 
 ## Void & Refund

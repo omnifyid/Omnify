@@ -33,7 +33,7 @@ Catalog writes (items, categories) clear the menu caches of every branch in the 
 ## UI
 
 - Settings → **Cabang** (Owner): branch list and "Tambah cabang". The new branch is selected after creation; the header store switcher changes branch.
-- Product editor (full screen, layout from `doc/new-ui`): info column (photo, name, category chips, base price, HPP, stock, platform prices, **Dijual di cabang**), recipe column with inline **Opsi** and **Tambahan** cards (saved with the product, no modal), sticky HPP / margin card. **Dijual di cabang** has a switch and price input per branch (placeholder = base price); with one branch it shows a link to Settings. In a branch the recipe is read-only and shows the parent's lines.
+- Product editor (full screen): info column (photo, name, category chips, base price, HPP, stock, platform prices, **Dijual di cabang**), recipe column with inline **Opsi** and **Tambahan** cards (saved with the product, no modal), sticky HPP / margin card. **Dijual di cabang** has a switch and price input per branch (placeholder = base price); with one branch it shows a link to Settings. In a branch the recipe is read-only and shows the parent's lines.
 - Store switcher shows a **Pusat** / **Cabang** badge when the business has more than one store.
 - Products and Categories pages show a notice: in the parent store that changes apply to every branch, in a branch that the catalog is linked to the parent store. In a branch the add button, availability switch, delete, category edit and reorder are disabled; the product editor is read-only except **Dijual di cabang**, and Save sends only the branch settings.
 - Product list marks items the current branch does not sell.

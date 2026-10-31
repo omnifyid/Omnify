@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CupcakeIcon from '$lib/components/CupcakeIcon.svelte';
   import { page } from '$app/stores';
   import { api, mediaUrl } from '$lib/api/client';
   import { language } from '$lib/i18n/language.svelte';
@@ -6,9 +7,9 @@
   import { formatRupiah } from '$lib/utils/format';
 
   // Types matching backend ItemRead schema
-  type MenuOptionChoice = { id: string; label: string; is_default: boolean; };
+  type MenuOptionChoice = { id: string; label: string; is_default: boolean; extra_price?: number; };
   type MenuOptionGroup  = { id: string; name: string; is_required: boolean; choices: MenuOptionChoice[]; };
-  type MenuAddonChoice  = { id: string; label: string; extra_price: number; is_available: boolean; };
+  type MenuAddonChoice  = { id: string; label: string; extra_price: number; is_available: boolean; is_default?: boolean; };
   type MenuAddonGroup   = { id: string; name: string; is_required: boolean; min_select: number; max_select: number | null; choices: MenuAddonChoice[]; };
   type MenuItem = {
     id: string; name: string; description: string | null;
@@ -104,23 +105,38 @@
         if (c) return sum + c.extra_price;
       }
       return sum;
-    }, 0)
+    }, 0) +
+      Object.values(customizeOptions).reduce((sum, cid) => {
+        for (const g of (customizeItem?.option_groups ?? [])) {
+          const c = g.choices.find((ch) => ch.id === cid);
+          if (c) return sum + (c.extra_price ?? 0);
+        }
+        return sum;
+      }, 0)
   );
   let customizeUnitPrice = $derived(customizeItem ? getItemPrice(customizeItem) + customizeAddonExtra : 0);
   let customizeTotal     = $derived(customizeUnitPrice * customizeQty);
   let customizeCanAdd    = $derived(
-    (customizeItem?.option_groups ?? []).every((g) => !g.is_required || !!customizeOptions[g.id])
+    (customizeItem?.option_groups ?? []).every((g) => !g.is_required || !!customizeOptions[g.id]) &&
+      (customizeItem?.addon_groups ?? []).every((g) => !(g.is_required || g.min_select > 0) || g.choices.some((c) => customizeAddons.has(c.id)))
   );
 
   // ── Helpers ──────────────────────────────────────────────
   function entryUnitPrice(e: CartEntry): number {
+    const optionExtra = e.selectedOptionChoiceIds.reduce((sum, cid) => {
+      for (const g of e.item.option_groups) {
+        const c = g.choices.find((ch) => ch.id === cid);
+        if (c) return sum + (c.extra_price ?? 0);
+      }
+      return sum;
+    }, 0);
     return e.selectedAddonChoiceIds.reduce((sum, cid) => {
       for (const g of e.item.addon_groups) {
         const c = g.choices.find((ch) => ch.id === cid);
         if (c) return sum + c.extra_price;
       }
       return sum;
-    }, getItemPrice(e.item));
+    }, getItemPrice(e.item) + optionExtra);
   }
 
   function entryModifierLabel(e: CartEntry): string {
@@ -173,11 +189,11 @@
       customizeQty = 1;
       const opts: Record<string, string> = {};
       for (const g of item.option_groups) {
-        const def = g.choices.find((c) => c.is_default);
+        const def = g.choices.find((c) => c.is_default) ?? (g.is_required ? g.choices[0] : undefined);
         if (def) opts[g.id] = def.id;
       }
       customizeOptions = opts;
-      customizeAddons  = new Set();
+      customizeAddons  = new Set(item.addon_groups.flatMap((g) => g.choices.filter((c) => c.is_default && c.is_available).map((c) => c.id)));
     }
   }
 
@@ -374,12 +390,7 @@
             {#if item.image_url}
               <img src={mediaUrl(item.image_url)} alt={item.name} class="h-full w-full object-cover" />
             {:else}
-              <div class="grid h-full w-full place-items-center opacity-25">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-14 w-14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h7" />
-                  <circle cx="17" cy="18" r="3" />
-                </svg>
-              </div>
+              <div class="grid h-full w-full place-items-center bg-[var(--white)] text-[var(--text-muted)] opacity-60"><CupcakeIcon size={72} /></div>
             {/if}
             {#if oos}
               <div class="absolute inset-0 grid place-items-center bg-black/40">
@@ -468,11 +479,7 @@
               {#if entry.item.image_url}
                 <img src={mediaUrl(entry.item.image_url)} alt={entry.item.name} class="h-full w-full object-cover" />
               {:else}
-                <div class="grid h-full w-full place-items-center opacity-30 text-[var(--espresso)]">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h7" />
-                  </svg>
-                </div>
+                <div class="grid h-full w-full place-items-center bg-[var(--white)] text-[var(--text-muted)] opacity-60"><CupcakeIcon size={28} /></div>
               {/if}
             </div>
             <!-- Name + modifiers + price -->
@@ -554,12 +561,7 @@
           <img src={mediaUrl(item.image_url)} alt={item.name} class="h-full w-full object-cover" />
         </div>
       {:else}
-        <div class="flex h-32 w-full shrink-0 items-center justify-center rounded-t-3xl bg-gradient-to-br from-[var(--light-brown)] to-[#d4b896] opacity-60">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-[var(--espresso)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h7" />
-            <circle cx="17" cy="18" r="3" />
-          </svg>
-        </div>
+        <div class="flex h-32 w-full shrink-0 items-center justify-center rounded-t-3xl bg-[var(--white)] text-[var(--text-muted)] opacity-60"><CupcakeIcon size={80} /></div>
       {/if}
 
       <!-- Header row (name + close) -->
@@ -605,6 +607,9 @@
                     {/if}
                   </span>
                   <span class="flex-1 text-sm font-semibold text-[var(--espresso)]">{choice.label}</span>
+                  {#if (choice.extra_price ?? 0) > 0}
+                    <span class="text-xs font-bold text-[var(--warm-brown)]">+{formatRupiah(choice.extra_price ?? 0)}</span>
+                  {/if}
                 </button>
               {/each}
             </div>

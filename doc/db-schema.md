@@ -38,7 +38,8 @@ stores
 | `channel_settings`, `item_channel_prices` | Per store + channel: `enabled`, `commission_bp`, `markup_bp`, `payout_lag_days`; per item + channel manual `price`. `stores.tax_bp`; order channel columns, see [prd-channels.md](prd-channels.md) |
 | `expenses`, `platform_settlements` | Operating expenses; payouts received from online platforms (`orders.settlement_id`, `orders.expected_payout_date`), see [prd-finance.md](prd-finance.md) |
 | `order_refunds` | Append-only void/refund log per order (`type`, `method`, `amount`, `reason`, `refunded_at`); `orders.refunded_amount`, `order_items.void_qty`, see [prd-orders.md](prd-orders.md) |
-| `order_items` | `is_done` (kitchen checklist), `void_qty`. Snapshot of `name`, `unit_price`, `quantity`, `options_snapshot`, `addons_snapshot` |
+| `orders.guest_count`, `orders.segment` | Head count and market segment (`FAM`/`GENZ`/`GENM`/`GENA`/`OFFC`/`CPL`) entered at the cashier, direct orders only |
+| `order_items` | `note` (cashier's custom note per line, max 200 chars, printed on receipt and kitchen ticket), `is_done` (kitchen checklist), `void_qty`. Snapshot of `name`, `unit_price`, `quantity`, `options_snapshot`, `addons_snapshot` |
 
 ## Model Conventions
 
@@ -48,6 +49,8 @@ stores
 - Soft FK on discount targets: `ondelete="SET NULL"` (item/category deleted → discount target becomes null)
 
 ## Options vs Addons
+
+The product editor shows both as one list, **Opsi & tambahan**. A group set to *Pilih 1* is stored as an option group, *Pilih banyak* as an add-on group. Both kinds of choice carry `extra_price` (option choices default to 0, e.g. Large +6.000); the extra is added to the line's unit price and snapshotted.
 
 | | OptionGroup | AddonGroup |
 |-|-------------|------------|

@@ -1,10 +1,12 @@
 <script lang="ts">
+  import CupcakeIcon from './CupcakeIcon.svelte';
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
   import { page as pageStore } from '$app/stores';
   import PhotoField from './PhotoField.svelte';
   import Toggle from './Toggle.svelte';
-  import { toAddonGroupsPayload, toItemUpdatePayload, toOptionGroupsPayload, type AddonGroupPayloadInput, type OptionGroupPayloadInput } from '$lib/api/catalog';
+  import { toItemUpdatePayload, toModifierPayloads } from '$lib/api/catalog';
+  import ItemPicker from '$lib/components/ItemPicker.svelte';
   import { api, mediaUrl } from '$lib/api/client';
   import { paginatedItems } from '$lib/api/pagination';
   import type { BranchSetting, Category, ChannelSetting, Ingredient, Item, OrderChannel, PaginatedResponse, RecipeLine } from '$lib/api/types';
@@ -29,10 +31,15 @@
   let description = $state('');
   let error = $state('');
   let loading = $state(false);
-  let addonGroups = $state<AddonGroupPayloadInput[]>([]);
-  // option choices are edited as tags; `draft` is the text being typed for a new tag
-  type OptionEditGroup = OptionGroupPayloadInput & { draft: string };
-  let optionGroups = $state<OptionEditGroup[]>([]);
+  // options & add-ons share one editor: single-choice groups are saved as option groups, multi-choice as add-on groups
+  type ModChoice = { name: string; price: string; is_default: boolean };
+  type ModGroup = { name: string; required: boolean; multi: boolean; max: string; open: boolean; choices: ModChoice[] };
+  let modGroups = $state<ModGroup[]>([]);
+  let modRequiredCount = $derived(modGroups.filter((g) => g.required).length);
+  // the list does not carry option groups; they load when the editor opens and are only saved once loaded
+  let modLoaded = $state(false);
+  let copyFromId = $state('');
+  let copyFromName = $state('');
   // manual per-platform prices (edit modal)
   const CHANNEL_NAMES: Record<OrderChannel, string> = { GOFOOD: 'GoFood', GRABFOOD: 'GrabFood', SHOPEEFOOD: 'ShopeeFood' };
   let channelSettings = $state<ChannelSetting[]>([]);
@@ -62,7 +69,7 @@
   // per-branch sold toggle and price override (only shown when the business has several branches)
   let editBranches = $state<Array<BranchSetting & { priceDisplay: string }>>([]);
   let editPriceDisplay = $state('');
-  let editTab = $state<'recipe' | 'options' | 'addons'>('recipe');
+  let editTab = $state<'recipe' | 'mods'>('recipe');
   // branches follow the parent store's catalog; only their sold toggle and price are editable
   let catalogLocked = $derived(session.selectedStore?.is_parent === false);
   // recipes are edited on the parent store only; branches follow it
@@ -115,6 +122,7 @@
     const params = new URLSearchParams();
     params.set('limit', String(limit));
     params.set('offset', String((page - 1) * limit));
+    params.set('include_groups', 'false'); // the list rows do not show option groups; the editor loads them
     if (filterCategoryId) params.set('category_id', filterCategoryId);
     if (searchQuery.trim()) params.set('search', searchQuery.trim());
     return params.toString();
@@ -126,15 +134,16 @@
     loading = true;
     error = '';
     try {
-      const [catsRes, itemsRes] = await Promise.all([
+      const [catsRes, itemsRes, channelsRes] = await Promise.all([
         api.get<PaginatedResponse<Category>>(`/stores/${storeId}/categories?limit=100`),
-        api.get<PaginatedResponse<Item>>(`/stores/${storeId}/items?${buildItemsQuery()}`)
+        api.get<PaginatedResponse<Item>>(`/stores/${storeId}/items?${buildItemsQuery()}`),
+        api.get<ChannelSetting[]>(`/stores/${storeId}/channels`).catch(() => [] as ChannelSetting[])
       ]);
       categories = paginatedItems(catsRes);
       items = paginatedItems(itemsRes);
       total = itemsRes.total;
       categoryId ||= categories[0]?.id ?? '';
-      channelSettings = await api.get<ChannelSetting[]>(`/stores/${storeId}/channels`).catch(() => []);
+      channelSettings = channelsRes;
     } catch (err) {
       error = err instanceof Error ? err.message : language.t('error');
     } finally {
@@ -237,12 +246,24 @@
     return categories.find((category) => category.id === item.category_id)?.name ?? '';
   }
 
-  function optionSummaryFor(item: Item) {
-    return (item.option_groups ?? []).map((group) => getGroupLabel(group)).join(', ');
-  }
-
-  function addonSummaryFor(item: Item) {
-    return (item.addon_groups ?? []).map((group) => getGroupLabel(group)).join(', ');
+  function groupsFromItem(item: Item): ModGroup[] {
+    const choicesOf = (group: NonNullable<Item['option_groups']>[number] | NonNullable<Item['addon_groups']>[number]): ModChoice[] =>
+      getGroupChoices(group).map((choice) => ({
+        name: getChoiceLabel(choice),
+        price: formatPriceDisplay(getChoicePrice(choice)),
+        is_default: Boolean((choice as { is_default?: boolean }).is_default)
+      }));
+    return [
+      ...(item.option_groups ?? []).map((group) => ({ name: getGroupLabel(group), required: Boolean(group.is_required ?? group.required), multi: false, max: '', open: false, choices: choicesOf(group) })),
+      ...(item.addon_groups ?? []).map((group) => ({
+        name: getGroupLabel(group),
+        required: Boolean(group.is_required) || (group.min_select ?? 0) > 0,
+        multi: true,
+        max: group.max_select ? String(group.max_select) : '',
+        open: false,
+        choices: choicesOf(group)
+      }))
+    ];
   }
 
   function openEditModal(item: Item) {
@@ -255,22 +276,26 @@
     editPriceDisplay = formatPriceDisplay(item.base_price ?? getItemPrice(item));
     void loadBranches(item.id);
     void loadRecipe(item.id);
-    optionGroups = (item.option_groups ?? []).map((group) => ({
-      name: getGroupLabel(group),
-      required: Boolean(group.is_required ?? group.required),
-      draft: '',
-      choices: getGroupChoices(group).map((choice) => ({ name: getChoiceLabel(choice), is_default: Boolean((choice as { is_default?: boolean }).is_default) }))
-    }));
-    addonGroups = (item.addon_groups ?? []).map((group) => ({
-      name: getGroupLabel(group),
-      min_select: group.min_select ?? 0,
-      max_select: group.max_select ?? null,
-      choices: getGroupChoices(group).map((choice) => ({ name: getChoiceLabel(choice), extra_price: getChoicePrice(choice) }))
-    }));
+    modGroups = [];
+    modLoaded = false;
+    void loadItemDetail(item.id);
     editCostDisplay = formatPriceDisplay(item.cost_price ?? 0);
     editChannelPrices = Object.fromEntries(Object.entries(item.channel_prices ?? {}).map(([k, v]) => [k, formatPriceDisplay(v ?? 0)]));
     editImageFile = null;
     editModalOpen = true;
+  }
+
+  async function loadItemDetail(itemId: string) {
+    const storeId = session.selectedStore?.id;
+    if (!storeId) return;
+    try {
+      const detail = await api.get<Item>(`/stores/${storeId}/items/${itemId}`);
+      if (editingItemId !== itemId) return;
+      modGroups = groupsFromItem(detail);
+      modLoaded = true;
+    } catch (err) {
+      if (editingItemId === itemId) error = err instanceof Error ? err.message : language.t('error');
+    }
   }
 
   async function loadBranches(itemId: string) {
@@ -287,8 +312,8 @@
   function closeEditModal() {
     editBranches = [];
     recipeLines = [];
-    optionGroups = [];
-    addonGroups = [];
+    modGroups = [];
+    modLoaded = false;
     editModalOpen = false;
     editingItemId = null;
     editProductName = '';
@@ -318,30 +343,33 @@
     if (!storeId || !editingItemId) return;
     savingEdit = true;
     error = '';
-    optionGroups.forEach((_, i) => commitOptionDraft(i));
+    const mods = toModifierPayloads(modGroups.map((g) => ({ name: g.name, required: g.required, multi: g.multi, max: parseInt(g.max, 10) || null, choices: g.choices.map((c) => ({ name: c.name, extra_price: parsePrice(c.price), is_default: c.is_default })) })));
     try {
       const stock = editStock === '' ? null : Math.max(0, parseInt(editStock, 10));
       const imageFile = editImageFile;
       // a branch only saves its own sold toggle and price; the catalog belongs to the parent store
       const catalogCalls: Promise<unknown>[] = catalogLocked ? [] : [
-        api.patch(`/stores/${storeId}/items/${editingItemId}`, { ...toItemUpdatePayload({ name: editProductName, categoryId: editCategoryId, basePrice: parsePrice(editPriceDisplay) }), cost_price: editCostDisplay ? parsePrice(editCostDisplay) : null }),
-        api.patch(`/stores/${storeId}/items/${editingItemId}/stock`, { stock }),
-        api.put(`/stores/${storeId}/items/${editingItemId}/option-groups`, toOptionGroupsPayload(optionGroups)),
-        api.put(`/stores/${storeId}/items/${editingItemId}/addon-groups`, toAddonGroupsPayload(addonGroups)),
+        // one request saves the product, stock, option groups and platform prices
+        api.patch(`/stores/${storeId}/items/${editingItemId}`, {
+          ...toItemUpdatePayload({ name: editProductName, categoryId: editCategoryId, basePrice: parsePrice(editPriceDisplay) }),
+          cost_price: editCostDisplay ? parsePrice(editCostDisplay) : null,
+          stock,
+          ...(modLoaded ? mods : {}),
+          // platform prices are replaced as a whole, so start from the saved ones and apply the edited platforms
+          ...(enabledChannels.length
+            ? {
+                channel_prices: {
+                  ...(editingItem?.channel_prices ?? {}),
+                  ...Object.fromEntries(enabledChannels.map((c) => [c.channel, parsePrice(editChannelPrices[c.channel] ?? '') || null]))
+                }
+              }
+            : {})
+        }),
         editIsParent
           ? api.put(`/stores/${storeId}/items/${editingItemId}/recipe`, {
               lines: recipeLines
                 .map((l) => ({ ingredient_id: l.ingredient_id, quantity: parseFloat(l.quantity.replace(',', '.')) }))
                 .filter((l) => l.ingredient_id && l.quantity > 0)
-            })
-          : Promise.resolve(),
-        // PUT replaces all platform prices, so start from the saved ones and apply the edited platforms
-        enabledChannels.length
-          ? api.put(`/stores/${storeId}/items/${editingItemId}/channel-prices`, {
-              prices: {
-                ...(editingItem?.channel_prices ?? {}),
-                ...Object.fromEntries(enabledChannels.map((c) => [c.channel, parsePrice(editChannelPrices[c.channel] ?? '') || null]))
-              }
             })
           : Promise.resolve()
       ];
@@ -394,49 +422,54 @@
     return price > 0 && editHpp > 0 ? Math.round(((price - editHpp) / price) * 100) : null;
   });
 
-  function addOptionGroup() {
-    optionGroups.push({ name: language.t('options'), required: true, draft: '', choices: [] });
+  function addModGroup() {
+    modGroups.push({ name: '', required: false, multi: false, max: '', open: true, choices: [{ name: '', price: '', is_default: false }] });
   }
 
-  function removeOptionGroup(index: number) {
-    optionGroups = optionGroups.filter((_, i) => i !== index);
+  function removeModGroup(index: number) {
+    modGroups = modGroups.filter((_, i) => i !== index);
   }
 
-  /** Turns the typed text (comma separated) into tags, skipping blanks and duplicates. */
-  function commitOptionDraft(groupIndex: number) {
-    const group = optionGroups[groupIndex];
-    for (const part of group.draft.split(',')) {
-      const name = part.trim();
-      if (name && !group.choices.some((c) => c.name.toLowerCase() === name.toLowerCase())) group.choices.push({ name, is_default: false });
+  /** One default per single-choice group (several allowed in a multi-choice group); tapping a default again clears it. */
+  function toggleModDefault(group: ModGroup, index: number) {
+    const makeDefault = !group.choices[index].is_default;
+    if (group.multi) group.choices[index].is_default = makeDefault;
+    else group.choices.forEach((c, i) => { c.is_default = makeDefault && i === index; });
+  }
+
+  function setModMulti(group: ModGroup, multi: boolean) {
+    group.multi = multi;
+    if (!multi) {
+      group.max = '';
+      // single-choice keeps at most one default
+      group.choices.filter((c) => c.is_default).slice(1).forEach((c) => { c.is_default = false; });
     }
-    group.draft = '';
   }
 
-  /** One default per group (options are single-choice); tapping the default again clears it. */
-  function toggleOptionDefault(groupIndex: number, choiceIndex: number) {
-    const choices = optionGroups[groupIndex].choices;
-    const makeDefault = !choices[choiceIndex].is_default;
-    choices.forEach((c, i) => { c.is_default = makeDefault && i === choiceIndex; });
+  function modSummary(group: ModGroup) {
+    return group.multi ? (parseInt(group.max, 10) > 0 ? `${language.t('modPickUpTo')} ${parseInt(group.max, 10)}` : language.t('modPickMany')) : language.t('modPickOne');
   }
 
-  function removeOptionChoice(groupIndex: number, choiceIndex: number) {
-    optionGroups[groupIndex].choices = optionGroups[groupIndex].choices.filter((_, i) => i !== choiceIndex);
-  }
+  // "copy from another menu": append that product's groups
+  $effect(() => {
+    const id = copyFromId;
+    if (!id) return;
+    untrack(() => void copyGroupsFrom(id));
+  });
 
-  function addAddonGroup() {
-    addonGroups.push({ name: 'Add-ons', min_select: 0, max_select: null, choices: [{ name: '', extra_price: 0 }] });
-  }
-
-  function removeAddonGroup(index: number) {
-    addonGroups = addonGroups.filter((_, i) => i !== index);
-  }
-
-  function addAddonChoice(groupIndex: number) {
-    addonGroups[groupIndex].choices.push({ name: '', extra_price: 0 });
-  }
-
-  function removeAddonChoice(groupIndex: number, choiceIndex: number) {
-    addonGroups[groupIndex].choices = addonGroups[groupIndex].choices.filter((_, i) => i !== choiceIndex);
+  async function copyGroupsFrom(id: string) {
+    const storeId = session.selectedStore?.id;
+    try {
+      if (storeId) {
+        const source = await api.get<Item>(`/stores/${storeId}/items/${id}`);
+        modGroups.push(...groupsFromItem(source));
+      }
+    } catch (err) {
+      error = err instanceof Error ? err.message : language.t('error');
+    } finally {
+      copyFromId = '';
+      copyFromName = '';
+    }
   }
 
   function openDeleteConfirm() {
@@ -527,7 +560,7 @@
           {#if item.image_url}
             <img src={mediaUrl(item.image_url)} alt={item.name} class="h-full w-full object-cover" />
           {:else}
-            <span class="ms !text-[24px] text-[var(--om-text-secondary)] opacity-50" aria-hidden="true">image</span>
+            <CupcakeIcon size={30} color="#8F8D85" />
           {/if}
         </div>
         <div class="min-w-0">
@@ -747,7 +780,7 @@
         <!-- Recipe -->
         <div class="min-w-0 space-y-4 md:col-start-2 md:row-start-2 xl:row-start-1">
           <div class={SEG_GROUP} role="tablist" aria-label={language.t('recipeIngredients')}>
-            {#each [['recipe', language.t('recipe')], ['options', language.t('options')], ['addons', language.t('addons')]] as [key, label] (key)}
+            {#each [['recipe', language.t('recipe')], ['mods', language.t('modTitle')]] as [key, label] (key)}
               <button type="button" role="tab" aria-selected={editTab === key} class="{seg(editTab === key)} flex-1 md:flex-none" style="min-height: var(--om-tap)" onclick={() => (editTab = key as typeof editTab)}>{label}</button>
             {/each}
           </div>
@@ -797,90 +830,89 @@
             <div class="flex items-center justify-end gap-2 text-[14px] tabular-nums text-[var(--om-ink-2)]">{language.t('recipeTotal')} <strong class="text-[16px] text-[var(--om-ink)]">{formatRupiah(Math.round(recipeCost))}</strong></div>
 
           </section>
-          {:else if editTab === 'options'}
-            <section class="card space-y-3 p-5">
-<fieldset disabled={catalogLocked} class="m-0 min-w-0 space-y-3 border-0 p-0">
-              <div>
-                <h2 class="text-[16px] font-bold">{language.t('options')}</h2>
-                <span class="text-[12px] text-[var(--om-text-secondary)]">{language.t('manageOptions')}</span>
-              </div>
-              {#each optionGroups as group, groupIndex}
-                <div class="rounded-xl border border-[var(--border)] bg-[var(--cream)] p-3">
-                  <div class="mb-2 flex items-center gap-1.5">
-                    <input class="field min-w-0 flex-1 py-2 text-sm" placeholder={language.t('groupNamePlaceholder')} bind:value={group.name} />
-                    <label class="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-2.5 py-2 text-xs font-bold text-[var(--espresso)] transition-colors hover:bg-[var(--cream)]">
-                      <input type="checkbox" bind:checked={group.required} class="accent-[var(--espresso)]" />
-                      {language.t('required')}
-                    </label>
-                    <button type="button" class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-red-200 bg-red-50 text-red-400 transition-colors hover:bg-red-100 hover:text-red-600" title={language.t('removeGroup')} onclick={() => removeOptionGroup(groupIndex)}><span class="ms !text-[14px]" aria-hidden="true">delete</span></button>
-                  </div>
-                  <div class="flex flex-wrap items-center gap-1.5">
-                    {#each group.choices as choice, choiceIndex (choice.name)}
-                      <span class="inline-flex h-9 items-center overflow-hidden rounded-full border text-sm font-medium transition-colors {choice.is_default ? 'border-[var(--om-brand)] bg-[var(--om-brand-tint)] text-[var(--om-ink)]' : 'border-[var(--om-border)] bg-white text-[var(--om-ink-2)]'}">
-                        <button type="button" class="flex h-full items-center gap-1 pl-3 pr-1.5" aria-pressed={choice.is_default} title={language.t('optionDefaultHint')} onclick={() => toggleOptionDefault(groupIndex, choiceIndex)}>
-                          {#if choice.is_default}<span class="ms !text-[16px] text-[var(--om-brand)]">check_circle</span>{/if}{choice.name}
-                        </button>
-                        <button type="button" class="grid h-full w-8 place-items-center text-[var(--text-muted)] hover:text-red-500" title={language.t('removeChoice')} aria-label={language.t('removeChoice')} onclick={() => removeOptionChoice(groupIndex, choiceIndex)}><span class="ms !text-[14px]" aria-hidden="true">close</span></button>
-                      </span>
-                    {/each}
-                    <input
-                      class="field h-9 min-w-[10rem] flex-1 py-0 text-sm"
-                      placeholder={language.t('optionTagPlaceholder')}
-                      bind:value={group.draft}
-                      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commitOptionDraft(groupIndex); } else if (e.key === 'Backspace' && !group.draft && group.choices.length) { removeOptionChoice(groupIndex, group.choices.length - 1); } }}
-                      onblur={() => commitOptionDraft(groupIndex)}
-                    />
-                  </div>
-                  <p class="mt-1.5 text-[12px] text-[var(--om-text-secondary)]">{language.t('optionDefaultHint')}</p>
-                </div>
-              {/each}
-              <button type="button" class="btn-outline px-3 py-2 text-sm" onclick={addOptionGroup}>+ {language.t('addOptionGroup')}</button>
-            </fieldset>
-</section>
           {:else}
-            <section class="card space-y-3 p-5">
-<fieldset disabled={catalogLocked} class="m-0 min-w-0 space-y-3 border-0 p-0">
-              <div>
-                <h2 class="text-[16px] font-bold">{language.t('addons')}</h2>
-                <span class="text-[12px] text-[var(--om-text-secondary)]">{language.t('manageAddons')}</span>
+          <section class="card space-y-4 p-5">
+            <fieldset disabled={catalogLocked || !modLoaded} class="m-0 min-w-0 space-y-4 border-0 p-0" aria-busy={!modLoaded}>
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0 flex-1 basis-64">
+                  <div class="flex flex-wrap items-baseline gap-x-3">
+                    <h2 class="text-[16px] font-bold">{language.t('modTitle')}</h2>
+                    {#if modGroups.length}<span class="text-[12px] font-semibold text-[var(--om-text-secondary)]">{modGroups.length} {language.t('modGroups')} · {modRequiredCount} {language.t('required').toLowerCase()}</span>{/if}
+                  </div>
+                  <p class="mt-1 text-[12px] text-[var(--om-text-secondary)]">{modLoaded ? language.t('modHint') : language.t('loading')}</p>
+                </div>
+                <div class="w-full sm:w-64"><ItemPicker bind:value={copyFromId} bind:name={copyFromName} placeholder={language.t('modCopyFrom')} /></div>
               </div>
-              {#each addonGroups as group, groupIndex}
-                <div class="rounded-xl border border-[var(--border)] bg-[var(--cream)] p-3">
-                  <div class="mb-2 flex items-end gap-1.5">
-                    <div class="min-w-0 flex-1">
-                      <span class="mb-0.5 block text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('name')}</span>
-                      <input class="field w-full min-w-0 py-2 text-sm" placeholder="e.g. Toppings" bind:value={group.name} />
-                    </div>
-                    <div class="w-14 shrink-0">
-                      <span class="mb-0.5 block text-center text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('min')}</span>
-                      <input class="field py-2 text-center text-sm" type="number" min="0" placeholder="0" bind:value={group.min_select} />
-                    </div>
-                    <div class="w-14 shrink-0">
-                      <span class="mb-0.5 block text-center text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('max')}</span>
-                      <input class="field py-2 text-center text-sm" type="number" min="0" placeholder="∞" bind:value={group.max_select} />
-                    </div>
-                    <button type="button" class="mb-0.5 grid h-[2.375rem] w-8 shrink-0 place-items-center rounded-lg border border-red-200 bg-red-50 text-red-400 transition-colors hover:bg-red-100 hover:text-red-600" title={language.t('removeGroup')} onclick={() => removeAddonGroup(groupIndex)}><span class="ms !text-[14px]" aria-hidden="true">delete</span></button>
+
+              {#each modGroups as group, groupIndex (groupIndex)}
+                <div class="rounded-2xl border border-[var(--om-border)] bg-white">
+                  <div class="flex items-start gap-2 p-3">
+                    <button type="button" class="min-w-0 flex-1 text-left" aria-expanded={group.open} onclick={() => (group.open = !group.open)}>
+                      <span class="flex flex-wrap items-center gap-2">
+                        <span class="text-[14px] font-bold">{group.name || language.t('modNewGroup')}</span>
+                        <span class="rounded-md px-2 py-0.5 text-[12px] font-bold {group.required ? 'bg-[#FCE9E6] text-[#8E1A14]' : 'bg-[#EFEEE9] text-[var(--om-text-secondary)]'}">{group.required ? language.t('required') : language.t('modOptional')}</span>
+                        <span class="rounded-md bg-[#EFEEE9] px-2 py-0.5 text-[12px] font-bold">{modSummary(group)}</span>
+                      </span>
+                      {#if !group.open}
+                        <span class="mt-2 flex flex-wrap gap-1.5">
+                          {#each group.choices.filter((c) => c.name.trim()) as choice}
+                            <span class="rounded-full px-3 py-1 text-[14px] {choice.is_default ? 'border-2 border-[var(--om-brand)] bg-[var(--om-brand-tint)]' : 'bg-[#EFEEE9]'}">{choice.name}{#if parsePrice(choice.price) > 0} +{parsePrice(choice.price).toLocaleString('id-ID')}{/if}</span>
+                          {/each}
+                        </span>
+                      {/if}
+                    </button>
+                    <button type="button" class="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] hover:bg-[var(--cream)]" aria-label={group.open ? language.t('close') : language.t('edit')} onclick={() => (group.open = !group.open)}><span class="ms">{group.open ? 'expand_less' : 'expand_more'}</span></button>
                   </div>
-                  <div class="mb-1 flex items-center gap-1.5 px-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">
-                    <span class="flex-1">{language.t('name')}</span>
-                    <span class="w-[6.5rem] shrink-0 text-right">{language.t('price')} (Rp)</span>
-                    <span class="w-8 shrink-0"></span>
-                  </div>
-                  <div class="space-y-1">
-                    {#each group.choices as choice, choiceIndex}
-                      <div class="flex items-center gap-1.5">
-                        <input class="field min-w-0 flex-1 py-2 text-sm" placeholder="e.g. Extra Shot" bind:value={choice.name} />
-                        <div class="w-[6.5rem] shrink-0"><input class="field py-2 text-right text-sm" type="number" min="0" placeholder="0" bind:value={choice.extra_price} /></div>
-                        <button type="button" class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-500" title={language.t('removeChoice')} onclick={() => removeAddonChoice(groupIndex, choiceIndex)}><span class="ms !text-[14px]" aria-hidden="true">close</span></button>
+
+                  {#if group.open}
+                    <div class="space-y-3 border-t border-[var(--om-border)] p-3">
+                      <label class="block">
+                        <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('name')}</span>
+                        <input class="field" placeholder={language.t('groupNamePlaceholder')} bind:value={group.name} />
+                      </label>
+                      <div class="flex flex-wrap items-center gap-3">
+                        <div class={SEG_GROUP} role="group" aria-label={language.t('modPickOne')}>
+                          <button type="button" class={seg(!group.multi)} style="min-height: var(--om-tap)" onclick={() => setModMulti(group, false)}>{language.t('modPickOne')}</button>
+                          <button type="button" class={seg(group.multi)} style="min-height: var(--om-tap)" onclick={() => setModMulti(group, true)}>{language.t('modPickMany')}</button>
+                        </div>
+                        {#if group.multi}
+                          <label class="flex items-center gap-2 text-[14px]">{language.t('max')}
+                            <input class="field w-20 py-2 text-center" type="number" min="1" placeholder="∞" bind:value={group.max} />
+                          </label>
+                        {/if}
+                        <div class="ml-auto flex items-center gap-1 text-[14px] font-semibold"><Toggle bind:checked={group.required} label={language.t('required')} onchange={(on) => { if (on && !group.multi && group.choices.length && !group.choices.some((c) => c.is_default)) group.choices[0].is_default = true; }} /><span>{language.t('required')}</span></div>
                       </div>
-                    {/each}
-                  </div>
-                  <button type="button" class="mt-2 text-xs font-bold text-[var(--warm-brown)] transition-colors hover:text-[var(--espresso)]" onclick={() => addAddonChoice(groupIndex)}>+ {language.t('addChoice')}</button>
+
+                      <div class="space-y-2">
+                        <div class="flex items-center gap-2 px-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">
+                          <span class="flex-1">{language.t('modChoiceName')}</span>
+                          <span class="w-[7rem] shrink-0 text-right">{language.t('price')} (Rp)</span>
+                          <span class="w-[5.5rem] shrink-0"></span>
+                        </div>
+                        {#each group.choices as choice, choiceIndex}
+                          <div class="flex items-center gap-2">
+                            <input class="field min-w-0 flex-1 py-2" placeholder="e.g. Besar" bind:value={choice.name} />
+                            <input class="field w-[7rem] shrink-0 py-2 text-right" type="text" inputmode="numeric" placeholder="0" value={choice.price} oninput={(e) => { choice.price = onPriceInput(e); }} />
+                            <div class="flex w-[5.5rem] shrink-0 justify-end gap-1">
+                              <button type="button" class="grid h-10 w-10 place-items-center rounded-lg border {choice.is_default ? 'border-[var(--om-brand)] bg-[var(--om-brand-tint)] text-[var(--om-brand)]' : 'border-[var(--om-border)] text-[var(--text-muted)]'}" title={language.t('modDefault')} aria-label={language.t('modDefault')} aria-pressed={choice.is_default} onclick={() => toggleModDefault(group, choiceIndex)}><span class="ms !text-[20px]">{choice.is_default ? 'check_circle' : 'radio_button_unchecked'}</span></button>
+                              <button type="button" class="grid h-10 w-10 place-items-center rounded-lg border border-[var(--om-border)] text-[var(--text-muted)] hover:border-red-200 hover:bg-red-50 hover:text-red-500" title={language.t('removeChoice')} aria-label={language.t('removeChoice')} onclick={() => (group.choices = group.choices.filter((_, i) => i !== choiceIndex))}><span class="ms !text-[20px]">close</span></button>
+                            </div>
+                          </div>
+                        {/each}
+                        <button type="button" class="text-xs font-bold text-[var(--warm-brown)] hover:text-[var(--espresso)]" onclick={() => group.choices.push({ name: '', price: '', is_default: false })}>+ {language.t('addChoice')}</button>
+                      </div>
+
+                      <div class="flex justify-end">
+                        <button type="button" class="flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-bold text-red-600 hover:bg-red-100" onclick={() => removeModGroup(groupIndex)}><span class="ms !text-[18px]">delete</span>{language.t('modDeleteGroup')}</button>
+                      </div>
+                    </div>
+                  {/if}
                 </div>
               {/each}
-              <button type="button" class="btn-outline px-3 py-2 text-sm" onclick={addAddonGroup}>+ {language.t('addAddonGroup')}</button>
+
+              <button type="button" class="inline-flex items-center gap-2 rounded-xl border-2 border-[var(--om-ink)] bg-white px-4 py-2 text-[14px] font-bold hover:bg-[var(--cream)]" onclick={addModGroup}><span class="ms">add</span>{language.t('modNewGroup')}</button>
             </fieldset>
-</section>
+          </section>
           {/if}
         </div>
 

@@ -4,7 +4,6 @@
   import { language } from '$lib/i18n/language.svelte';
   import { getItemPrice } from '$lib/utils/catalog';
   import { formatRupiah } from '$lib/utils/format';
-  import { ShoppingCart, X, Plus, Minus } from 'lucide-svelte';
 
   // Types matching backend ItemRead schema
   type MenuOptionChoice = { id: string; label: string; is_default: boolean; };
@@ -302,7 +301,7 @@
             class="relative flex shrink-0 items-center gap-2 rounded-full bg-[var(--espresso)] px-4 py-2 text-sm font-bold text-white transition active:scale-95"
             onclick={() => { cartOpen = true; }}
           >
-            <ShoppingCart class="h-4 w-4" />
+            <span class="ms !text-[16px]" aria-hidden="true">shopping_cart</span>
             <span>{cartCount}</span>
           </button>
         {/if}
@@ -402,17 +401,17 @@
                 <button
                   class="grid h-7 w-7 place-items-center rounded-full bg-[var(--cream)] text-[var(--espresso)] transition hover:bg-[var(--light-brown)]"
                   onclick={(e) => { e.stopPropagation(); setQty(item.id, -1); }}
-                ><Minus class="h-3.5 w-3.5" /></button>
+                ><span class="ms !text-[14px]" aria-hidden="true">remove</span></button>
                 <span class="text-sm font-bold text-[var(--espresso)]">{qty}</span>
                 <button
                   class="grid h-7 w-7 place-items-center rounded-full bg-[var(--espresso)] text-white"
                   onclick={(e) => { e.stopPropagation(); setQty(item.id, +1); }}
-                ><Plus class="h-3.5 w-3.5" /></button>
+                ><span class="ms !text-[14px]" aria-hidden="true">add</span></button>
               </div>
             {:else}
               <div class="mt-2 flex justify-end">
                 <span class="grid h-7 w-7 place-items-center rounded-full bg-[var(--cream)] text-[var(--espresso)]">
-                  <Plus class="h-3.5 w-3.5" />
+                  <span class="ms !text-[14px]" aria-hidden="true">add</span>
                 </span>
               </div>
             {/if}
@@ -455,7 +454,7 @@
           <span class="rounded-full bg-[var(--cream)] px-3 py-1 text-xs font-bold text-[var(--warm-brown)]">{language.t('table')} {tableNumber}</span>
         {/if}
         <button class="grid h-9 w-9 place-items-center rounded-full bg-[var(--cream)]" onclick={() => { cartOpen = false; }}>
-          <X class="h-4 w-4 text-[var(--espresso)]" />
+          <span class="ms !text-[16px] text-[var(--espresso)]" aria-hidden="true">close</span>
         </button>
       </div>
 
@@ -489,12 +488,12 @@
               <button
                 class="grid h-8 w-8 place-items-center rounded-full bg-[var(--cream)] transition hover:bg-[var(--light-brown)]"
                 onclick={() => setQty(entry.item.id, -1)}
-              ><Minus class="h-3.5 w-3.5 text-[var(--espresso)]" /></button>
+              ><span class="ms !text-[14px] text-[var(--espresso)]" aria-hidden="true">remove</span></button>
               <span class="w-5 text-center text-sm font-bold text-[var(--espresso)]">{entry.qty}</span>
               <button
                 class="grid h-8 w-8 place-items-center rounded-full bg-[var(--espresso)]"
                 onclick={() => setQty(entry.item.id, +1)}
-              ><Plus class="h-3.5 w-3.5 text-white" /></button>
+              ><span class="ms !text-[14px] text-white" aria-hidden="true">add</span></button>
             </div>
             <p class="w-20 shrink-0 text-right text-sm font-bold text-[var(--espresso)]">{formatRupiah(unitPrice * entry.qty)}</p>
           </div>
@@ -573,7 +572,7 @@
           <p class="mt-1 text-base font-bold text-[var(--warm-brown)]">{formatRupiah(getItemPrice(item))}</p>
         </div>
         <button class="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--cream)]" onclick={closeCustomize}>
-          <X class="h-4 w-4 text-[var(--espresso)]" />
+          <span class="ms !text-[16px] text-[var(--espresso)]" aria-hidden="true">close</span>
         </button>
       </div>
 
@@ -659,12 +658,12 @@
               class="grid h-9 w-9 place-items-center rounded-full bg-[var(--cream)] transition hover:bg-[var(--light-brown)] disabled:opacity-40"
               disabled={customizeQty <= 1}
               onclick={() => { if (customizeQty > 1) customizeQty--; }}
-            ><Minus class="h-4 w-4 text-[var(--espresso)]" /></button>
+            ><span class="ms !text-[16px] text-[var(--espresso)]" aria-hidden="true">remove</span></button>
             <span class="w-6 text-center text-lg font-bold text-[var(--espresso)]">{customizeQty}</span>
             <button
               class="grid h-9 w-9 place-items-center rounded-full bg-[var(--espresso)] transition"
               onclick={() => { customizeQty++; }}
-            ><Plus class="h-4 w-4 text-white" /></button>
+            ><span class="ms !text-[16px] text-white" aria-hidden="true">add</span></button>
           </div>
         </div>
         <button

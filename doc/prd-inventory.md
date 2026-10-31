@@ -12,7 +12,7 @@ Per-store ingredient stock (bahan baku). Products have an optional recipe; every
 | `recipe_lines` | `item_id + ingredient_id` unique, `quantity` per 1 item sold |
 | `stock_movements` | Append-only log: `type` (`INITIAL`/`RESTOCK`/`SALE`/`RETURN`/`OPNAME`), signed `quantity`, `balance_after`, `order_id`, `user_id`, `note` |
 
-Low stock: `stock <= min_stock`.
+Low stock: `stock <= min_stock`. Status chip: **Kritis** under half of `min_stock`, **Menipis** at or under `min_stock`, otherwise **Aman**. The bar is full at twice `min_stock`.
 
 ## Rules
 
@@ -27,7 +27,7 @@ Low stock: `stock <= min_stock`.
 
 | Method | Path | Guard | Notes |
 |--------|------|-------|-------|
-| GET | `/stores/{id}/ingredients` | AnyMember | Paginated; `search`, `low_stock` |
+| GET | `/stores/{id}/ingredients` | AnyMember | Paginated; `search`, `low_stock`, `level` (`low` = at or under `min_stock` but not critical, `critical` = under half of it) |
 | GET | `/stores/{id}/ingredients/summary` | AnyMember | `count`, `low_count`, `stock_value`, `categories` (drives the KPIs) |
 | POST | `/stores/{id}/ingredients` | OwnerOrManager | 201; `initial_stock` logs `INITIAL`; 409 on duplicate name |
 | PATCH | `/stores/{id}/ingredients/{iid}` | OwnerOrManager | Metadata only, never stock |
@@ -39,7 +39,7 @@ Low stock: `stock <= min_stock`.
 
 ## UI
 
-- `/inventory`: KPIs (ingredient count, low stock, stock value), tabs **Stok** (list, add/edit/delete modal, "Terima" restock modal), **Stock opname** (count inputs, per-row difference, value of differences, save), **Mutasi** (latest 100 movements).
+- `/inventory`: KPIs (ingredient count, low stock, stock value), tabs **Stok** (status chips Semua / Menipis / Kritis filter on the server; list with a stock-level bar and status chip per ingredient, add/edit/delete modal, "Terima" restock modal), **Stock opname** (one row per ingredient: system stock, count input, difference in units and its value in Rupiah; total value of differences, save), **Mutasi** (latest 100 movements).
 - Recipe editor: inline "Resep & bahan baku" column of the product editor in `ProductsPanel.svelte` (per-line quantity, unit cost, subtotal, total). Branches follow the parent store's recipe, see [prd-branches.md](prd-branches.md). Existing lines come from `GET .../recipe` (name, unit, cost); new lines are added with `IngredientPicker` (search-as-you-type), so the ingredient list is never loaded in full.
 
 ## Not implemented

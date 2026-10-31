@@ -1,6 +1,5 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { X } from 'lucide-svelte';
   import { api } from '$lib/api/client';
   import { paginatedItems } from '$lib/api/pagination';
   import type { Item, PaginatedResponse } from '$lib/api/types';
@@ -51,7 +50,7 @@
 {#if value}
   <div class="field flex items-center justify-between gap-2">
     <span class="truncate">{name || '—'}</span>
-    <button type="button" class="grid h-6 w-6 shrink-0 place-items-center rounded-full text-[var(--text-muted)] hover:bg-[var(--cream)]" aria-label={language.t('close')} onclick={() => { value = ''; name = ''; }}><X class="h-3.5 w-3.5" /></button>
+    <button type="button" class="grid h-6 w-6 shrink-0 place-items-center rounded-full text-[var(--text-muted)] hover:bg-[var(--cream)]" aria-label={language.t('close')} onclick={() => { value = ''; name = ''; }}><span class="ms !text-[14px]" aria-hidden="true">close</span></button>
   </div>
 {:else}
   <div class="relative">

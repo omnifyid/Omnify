@@ -7,10 +7,9 @@
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
-  import { seg, SEG_GROUP } from '$lib/utils/ui';
+  import { chip, CHIP_ROW, seg, SEG_GROUP } from '$lib/utils/ui';
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
   import { PAGE_SIZE } from '$lib/utils/paging';
-  import { Plus, Search, Trash2, X } from 'lucide-svelte';
 
   type Tab = 'stock' | 'opname' | 'movements';
 
@@ -49,8 +48,22 @@
   };
   const fmtQty = (n: number) => new Intl.NumberFormat('id-ID', { maximumFractionDigits: 3 }).format(n);
   const isLow = (i: Ingredient) => i.stock <= i.min_stock;
+  /** Kritis under half the limit, Menipis at or under it (same rule as the low-stock KPI), otherwise Aman. */
+  function stockLevel(i: Ingredient) {
+    if (i.stock < i.min_stock * 0.5 || i.stock < 0) return 'critical' as const;
+    return isLow(i) ? ('low' as const) : ('ok' as const);
+  }
+  const LEVEL = {
+    critical: { label: 'invCritical', bar: 'bg-[#D64535]', chip: 'bg-[var(--om-danger-tint)] text-[var(--om-danger)]' },
+    low: { label: 'invLow', bar: 'bg-[#E0A526]', chip: 'bg-[var(--om-warning-tint)] text-[var(--om-warning)]' },
+    ok: { label: 'invOk', bar: 'bg-[var(--om-brand-bright)]', chip: 'bg-[var(--om-brand-tint)] text-[var(--om-brand)]' }
+  } as const;
+  /** Bar fill: the full bar equals twice the limit, like new-ui. */
+  const levelPct = (i: Ingredient) => (i.min_stock > 0 ? Math.max(0, Math.min(100, (i.stock / (i.min_stock * 2)) * 100)) : i.stock > 0 ? 100 : 0);
   const digits = (s: string) => s.replace(/\D/g, '');
 
+  // stock tab filter, server-side: Menipis = at or under the limit, Kritis = under half of it
+  let stockFilter = $state<'' | 'low' | 'critical'>('');
   let summary = $state<IngredientSummary | null>(null);
   let listTotal = $state(0);
   let stockPage = $state(1);
@@ -81,6 +94,7 @@
       const page = tab === 'opname' ? opPage : stockPage;
       const q = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String((page - 1) * PAGE_SIZE) });
       if (tab === 'stock' && search.trim()) q.set('search', search.trim());
+      if (tab === 'stock' && stockFilter) q.set('level', stockFilter);
       const res = await api.get<PaginatedResponse<Ingredient>>(`/stores/${storeId}/ingredients?${q}`);
       ingredients = paginatedItems(res);
       listTotal = res.total;
@@ -259,6 +273,7 @@
     void stockPage;
     void opPage;
     void search;
+    void stockFilter;
     untrack(() => {
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => void loadIngredients(), tab === 'stock' && search.trim() ? 350 : 0);
@@ -295,24 +310,31 @@
   </div>
   <div class="flex-1"></div>
   {#if tab === 'stock'}
-    <button class="btn-primary flex items-center gap-2" onclick={openCreate}><Plus class="h-4 w-4" />{language.t('invAddIngredient')}</button>
+    <button class="btn-primary flex items-center gap-2" onclick={openCreate}><span class="ms !text-[16px]" aria-hidden="true">add</span>{language.t('invAddIngredient')}</button>
   {/if}
 </div>
 
-{#if tab !== 'movements'}
-  <label class="field mb-4 flex w-full max-w-sm items-center gap-2">
-    <Search class="h-4 w-4 text-[var(--text-muted)]" />
-    <input class="min-w-0 flex-1 bg-transparent outline-none" placeholder={language.t('invSearch')} bind:value={search} oninput={() => (stockPage = 1)} />
-  </label>
+{#if tab === 'stock'}
+  <div class="mb-4 flex flex-wrap items-center gap-3">
+    <label class="field flex w-full max-w-sm items-center gap-2">
+      <span class="ms !text-[16px] text-[var(--text-muted)]" aria-hidden="true">search</span>
+      <input class="min-w-0 flex-1 bg-transparent outline-none" placeholder={language.t('invSearch')} bind:value={search} oninput={() => (stockPage = 1)} />
+    </label>
+    <div class={CHIP_ROW} role="group" aria-label={language.t('status')}>
+      {#each [['', 'all'], ['low', 'invLow'], ['critical', 'invCritical']] as [key, label] (key)}
+        <button type="button" class={chip(stockFilter === key)} style="min-height: var(--om-tap)" aria-pressed={stockFilter === key} onclick={() => { stockFilter = key as typeof stockFilter; stockPage = 1; }}>{language.t(label as MessageKey)}</button>
+      {/each}
+    </div>
+  </div>
 {/if}
 
 {#if tab === 'stock'}
   <div class="card overflow-hidden">
     <div class="hidden grid-cols-[1.4fr_1.6fr_120px_100px_90px] gap-3 border-b border-[var(--border)] bg-[var(--cream)] px-4 py-3 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)] md:grid">
-      <div>{language.t('invName')}</div><div>{language.t('invOnHand')}</div><div class="text-right">{language.t('invCostPerUnit')}</div><div>{language.t('status')}</div><div></div>
+      <div>{language.t('invName')}</div><div>{language.t('invOnHand')}</div><div class="text-right">{language.t('price')}</div><div>{language.t('status')}</div><div></div>
     </div>
     {#each ingredients as i (i.id)}
-      {@const low = isLow(i)}
+      {@const level = LEVEL[stockLevel(i)]}
       <div
         class="group flex cursor-pointer flex-wrap items-center gap-3 border-b border-[var(--border)] p-3 transition-colors last:border-0 hover:bg-[var(--cream)] active:bg-[var(--light-brown)]/60 md:grid md:grid-cols-[1.4fr_1.6fr_120px_100px_90px] md:px-4 md:py-3"
         role="button"
@@ -325,37 +347,49 @@
           <div class="truncate font-medium">{i.name}</div>
           <div class="text-xs text-[var(--text-muted)]">{i.category ?? '—'}</div>
         </div>
-        <div class="text-sm tabular-nums"><strong>{fmtQty(i.stock)}</strong> <span class="text-[var(--text-muted)]">/ {fmtQty(i.min_stock)} {i.unit}</span></div>
+        <div class="flex basis-full items-center gap-2.5 md:basis-auto">
+          <div class="h-1.5 flex-1 overflow-hidden rounded bg-[var(--om-fill-muted)]" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(levelPct(i))}>
+            <div class="h-full rounded {level.bar}" style="width: {levelPct(i)}%"></div>
+          </div>
+          <div class="w-[9rem] shrink-0 whitespace-nowrap text-right text-xs tabular-nums"><strong>{fmtQty(i.stock)}</strong> <span class="text-[var(--text-muted)]">/ {fmtQty(i.min_stock)} {i.unit}</span></div>
+        </div>
         <div class="hidden text-right text-sm tabular-nums md:block">{formatRupiah(i.cost_price)}/{i.unit}</div>
-        <div><span class="rounded-full px-2.5 py-1 text-xs font-bold {low ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-700'}">{low ? language.t('invLow') : language.t('invOk')}</span></div>
+        <div><span class="rounded-full px-2.5 py-1 text-xs font-semibold {level.chip}">{language.t(level.label)}</span></div>
         <button class="btn-outline px-3 py-2 text-sm" onclick={(e) => { e.stopPropagation(); openRestock(i); }}>{language.t('invReceive')}</button>
       </div>
     {:else}
-      <div class="p-8 text-center text-[var(--text-muted)]">{language.t('invEmptyList')}</div>
+      <div class="p-8 text-center text-[var(--text-muted)]">{language.t(search.trim() || stockFilter ? 'invNoMatch' : 'invEmptyList')}</div>
     {/each}
   </div>
   <Pagination page={stockPage} total={listTotal} {loading} onPage={(p) => (stockPage = p)} />
 {:else if tab === 'opname'}
   <div class="grid items-start gap-4 lg:grid-cols-[1fr_300px]">
     <div class="card overflow-hidden">
+      <div class="hidden grid-cols-[minmax(0,1.4fr)_90px_70px_110px_100px_110px] gap-3 border-b border-[var(--border)] bg-[var(--cream)] px-4 py-2 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)] md:grid">
+        <div>{language.t('invName')}</div><div class="text-right">{language.t('invSystem')}</div><div>{language.t('invUnit')}</div><div>{language.t('invCounted')}</div><div class="text-right">{language.t('invDifference')}</div><div class="text-right">{language.t('invDiffValue')}</div>
+      </div>
       {#each opRows as { i, diff } (i.id)}
-        <div class="flex items-center gap-3 border-b border-[var(--border)] p-3 last:border-0 {diff ? 'bg-[var(--light-brown)]/40' : ''}">
-          <div class="min-w-0 flex-1">
-            <div class="truncate font-medium">{i.name}</div>
-            <div class="text-xs tabular-nums text-[var(--text-muted)]">{language.t('invSystem')} {fmtQty(i.stock)} {i.unit}</div>
-          </div>
-          {#if diff}
-            <div class="w-20 text-right text-sm font-bold tabular-nums {diff < 0 ? 'text-red-600' : 'text-green-700'}">{diff > 0 ? '+' : ''}{fmtQty(diff)}</div>
-          {/if}
-          <div class="field flex w-32 shrink-0 items-center gap-1">
+        {@const tone = !diff ? 'text-[var(--text-muted)]' : diff < 0 ? 'text-[var(--om-danger)]' : 'text-[var(--om-brand)]'}
+        {@const diffText = diff === null ? '' : `${diff > 0 ? '+' : diff < 0 ? '−' : ''}${fmtQty(Math.abs(diff))}`}
+        {@const valueText = diff ? `${diff > 0 ? '+' : '−'}${formatRupiah(Math.abs(Math.round(diff * i.cost_price)))}` : ''}
+        <div class="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-0.5 border-b border-[var(--border)] px-3 py-2 last:border-0 md:grid-cols-[minmax(0,1.4fr)_90px_70px_110px_100px_110px] md:gap-3 md:px-4 md:py-1.5 {diff !== null ? 'bg-[var(--om-surface-sunk)]' : ''}">
+          <div class="min-w-0 truncate text-sm font-medium">{i.name}</div>
+          <div class="hidden text-right text-sm tabular-nums md:block">{fmtQty(i.stock)}</div>
+          <div class="hidden text-sm text-[var(--text-muted)] md:block">{i.unit}</div>
+          <div class="field flex !min-h-0 h-9 w-28 items-center !px-2.5 !py-0 md:w-auto">
             <input
               class="min-w-0 flex-1 bg-transparent text-right tabular-nums outline-none"
               inputmode="decimal"
-              placeholder={language.t('invCounted')}
+              placeholder="0"
+              aria-label={`${language.t('invCounted')}: ${i.name}`}
               value={counted[i.id] ?? ''}
               oninput={(e) => (counted[i.id] = e.currentTarget.value)}
             />
-            <span class="text-xs text-[var(--text-muted)]">{i.unit}</span>
+          </div>
+          <div class="hidden text-right text-sm font-semibold tabular-nums md:block {tone}">{diffText}</div>
+          <div class="hidden text-right text-sm font-semibold tabular-nums md:block {tone}">{valueText}</div>
+          <div class="col-span-2 text-xs tabular-nums text-[var(--text-muted)] md:hidden">
+            {language.t('invSystem')} {fmtQty(i.stock)} {i.unit}{#if diff} · <span class="font-bold {tone}">{diffText} {i.unit} {valueText}</span>{/if}
           </div>
         </div>
       {:else}
@@ -421,7 +455,7 @@
       </div>
       <div class="flex items-center gap-3 border-t border-[var(--border)] p-5">
         {#if editing}
-          <button class="flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-600 transition hover:bg-red-100" onclick={openDelete}><Trash2 class="h-4 w-4" />{language.t('delete')}</button>
+          <button class="flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-600 transition hover:bg-red-100" onclick={openDelete}><span class="ms !text-[16px]" aria-hidden="true">delete</span>{language.t('delete')}</button>
         {/if}
         <div class="flex flex-1 items-center justify-end gap-3">
           <button class="btn-outline" onclick={() => (formOpen = false)}>{language.t('cancel')}</button>
@@ -441,7 +475,7 @@
           <h2 class="display-font truncate text-2xl font-bold text-[var(--espresso)]">{language.t('invRestock')}</h2>
           <p class="truncate text-sm text-[var(--text-muted)]">{restockTarget.name} · {fmtQty(restockTarget.stock)} {restockTarget.unit}</p>
         </div>
-        <button class="grid h-9 w-9 place-items-center rounded-xl border border-[var(--border)]" onclick={() => (restockTarget = null)} aria-label={language.t('close')}><X class="h-4 w-4" /></button>
+        <button class="grid h-9 w-9 place-items-center rounded-xl border border-[var(--border)]" onclick={() => (restockTarget = null)} aria-label={language.t('close')}><span class="ms !text-[16px]" aria-hidden="true">close</span></button>
       </div>
       <div class="space-y-3 p-5">
         <label class="block">
@@ -467,7 +501,7 @@
   <div class="fixed inset-0 z-50 flex items-center justify-center bg-[var(--om-scrim)] p-4 backdrop-blur-sm">
     <section class="w-full max-w-sm overflow-hidden rounded-3xl bg-[var(--white)] shadow-2xl" role="dialog" aria-modal="true">
       <div class="flex flex-col items-center px-6 pb-5 pt-7 text-center">
-        <div class="mb-4 grid h-14 w-14 place-items-center rounded-full bg-red-100"><Trash2 class="h-6 w-6 text-red-600" /></div>
+        <div class="mb-4 grid h-14 w-14 place-items-center rounded-full bg-red-100"><span class="ms !text-[24px] text-red-600" aria-hidden="true">delete</span></div>
         <h2 class="display-font text-xl font-bold text-[var(--espresso)]">{language.t('invDeleteTitle')}</h2>
         <p class="mt-2 text-sm text-[var(--text-muted)]"><strong class="text-[var(--espresso)]">{deleteTarget.name}</strong> — {language.t('invDeleteBody')}</p>
       </div>

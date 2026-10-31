@@ -8,7 +8,6 @@
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
-  import { Trash2, X } from 'lucide-svelte';
 
   let discounts = $state<Discount[]>([]);
   let categories = $state<Category[]>([]);
@@ -347,7 +346,7 @@
           <h2 class="display-font text-xl font-bold text-[var(--espresso)]">{language.t('addDiscount')}</h2>
           <p class="text-sm text-[var(--text-muted)]">{language.t('createDiscountSubtitle')}</p>
         </div>
-        <button class="icon-btn flex-shrink-0" onclick={closeCreate}><X size={18} /></button>
+        <button class="icon-btn flex-shrink-0" onclick={closeCreate}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
       </div>
 
       <form
@@ -474,7 +473,7 @@
           <h2 class="display-font text-xl font-bold text-[var(--espresso)]">{language.t('editDiscount')}</h2>
           <p class="truncate text-sm text-[var(--text-muted)]">{editingDiscount.name}</p>
         </div>
-        <button class="icon-btn flex-shrink-0" onclick={cancelEdit}><X size={18} /></button>
+        <button class="icon-btn flex-shrink-0" onclick={cancelEdit}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-5">
@@ -578,7 +577,7 @@
           class="flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-600 transition hover:bg-red-100"
           onclick={openDeleteConfirm}
         >
-          <Trash2 class="h-4 w-4" />
+          <span class="ms !text-[16px]" aria-hidden="true">delete</span>
           {language.t('delete')}
         </button>
         <div class="flex flex-1 items-center justify-end gap-3">
@@ -595,7 +594,7 @@
     <section class="w-full max-w-sm overflow-hidden rounded-3xl bg-[var(--white)] shadow-2xl" role="dialog" aria-modal="true">
       <div class="flex flex-col items-center px-6 pb-5 pt-7 text-center">
         <div class="mb-4 grid h-14 w-14 place-items-center rounded-full bg-red-100">
-          <Trash2 class="h-6 w-6 text-red-600" />
+          <span class="ms !text-[24px] text-red-600" aria-hidden="true">delete</span>
         </div>
         <h2 class="display-font text-xl font-bold text-[var(--espresso)]">{language.t('deleteDiscount')}</h2>
         <p class="mt-2 text-sm text-[var(--text-muted)]">

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { Landmark, Check } from 'lucide-svelte';
   import { api } from '$lib/api/client';
   import { paginatedItems } from '$lib/api/pagination';
   import type { ChannelOverview, OrderChannel, PaginatedResponse, PlatformSettlement, Receivable, ReceivableSelection, SettlementBatch } from '$lib/api/types';
@@ -211,7 +210,7 @@
     <img src={META[channel].logo} alt="" class="h-6 w-auto max-w-[68px]" />
     {META[channel].label} · {language.t('finReceivablesTitle')}
   </h2>
-  <button class="btn-primary flex items-center gap-2 disabled:opacity-50" disabled={!batchTotal} onclick={() => openForm(null)}><Landmark class="h-4 w-4" />{language.t('finRecordPayout')}</button>
+  <button class="btn-primary flex items-center gap-2 disabled:opacity-50" disabled={!batchTotal} onclick={() => openForm(null)}><span class="ms !text-[16px]" aria-hidden="true">account_balance</span>{language.t('finRecordPayout')}</button>
 </div>
 
 <div class="card mb-6 overflow-hidden" class:opacity-60={loading}>
@@ -293,7 +292,7 @@
           <label class="block"><span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('finReceivedDate')}</span><input class="field" type="date" bind:value={fDate} /></label>
         </div>
         {#if fAmount !== '' && diff === 0 && chosenIds.length}
-          <div class="flex items-center gap-1.5 text-sm font-semibold text-[var(--om-brand)]"><Check class="h-4 w-4" />{language.t('finMatch')}</div>
+          <div class="flex items-center gap-1.5 text-sm font-semibold text-[var(--om-brand)]"><span class="ms !text-[16px]" aria-hidden="true">check</span>{language.t('finMatch')}</div>
         {:else if fAmount !== '' && diff !== 0}
           <div class="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--cream)] p-3">
             <div class="flex justify-between text-sm font-semibold"><span>{language.t('finDiff')}</span><span class="tabular-nums {diff < 0 ? 'text-red-700' : 'text-[var(--om-brand)]'}">{signed(diff)}</span></div>

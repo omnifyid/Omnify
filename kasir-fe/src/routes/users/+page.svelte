@@ -5,7 +5,6 @@
   import type { PaginatedResponse, Role, StoreMember } from '$lib/api/types';
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
-  import { ChevronRight, KeyRound, Trash2, UserPlus, X } from 'lucide-svelte';
 
   let members = $state<StoreMember[]>([]);
   let loading = $state(false);
@@ -226,7 +225,7 @@
     <p class="text-[var(--text-muted)]">{language.t('inviteStaffSubtitle')}</p>
   </div>
   <button class="btn-primary flex-shrink-0 flex items-center gap-2" onclick={openCreate}>
-    <UserPlus class="h-4 w-4" />
+    <span class="ms !text-[16px]" aria-hidden="true">person_add</span>
     {language.t('addMember')}
   </button>
 </div>
@@ -290,7 +289,7 @@
       >
         {@render rowContent()}
         <div class="hidden shrink-0 items-center justify-center md:flex">
-          <ChevronRight class="h-4 w-4 text-[var(--text-muted)] opacity-25 transition-opacity group-hover:opacity-60" />
+          <span class="ms !text-[16px] text-[var(--text-muted)] opacity-25 transition-opacity group-hover:opacity-60" aria-hidden="true">chevron_right</span>
         </div>
       </div>
     {/if}
@@ -320,7 +319,7 @@
         <h2 class="display-font flex-1 text-2xl font-bold text-[var(--espresso)]">
           {modalEditing ? language.t('editMember') : language.t('addMember')}
         </h2>
-        <button class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)] hover:text-[var(--espresso)]" onclick={closeModal} aria-label={language.t('close')}><X class="h-4 w-4" /></button>
+        <button class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)] hover:text-[var(--espresso)]" onclick={closeModal} aria-label={language.t('close')}><span class="ms !text-[16px]" aria-hidden="true">close</span></button>
       </div>
 
       <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
@@ -377,7 +376,7 @@
               class="flex shrink-0 items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--cream)] px-3 py-1.5 text-sm font-bold text-[var(--espresso)] transition hover:bg-[var(--light-brown)]"
               onclick={() => modalEditing && openResetPw(modalEditing)}
             >
-              <KeyRound class="h-3.5 w-3.5" />
+              <span class="ms !text-[14px]" aria-hidden="true">key</span>
               {language.t('reset')}
             </button>
           </div>
@@ -390,7 +389,7 @@
             class="flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-600 transition hover:bg-red-100"
             onclick={openDeleteConfirm}
           >
-            <Trash2 class="h-4 w-4" />
+            <span class="ms !text-[16px]" aria-hidden="true">delete</span>
             {language.t('remove')}
           </button>
         {/if}
@@ -410,7 +409,7 @@
     <section class="w-full max-w-sm overflow-hidden rounded-3xl bg-[var(--white)] shadow-2xl" role="dialog" aria-modal="true">
       <div class="flex flex-col items-center px-6 pb-5 pt-7 text-center">
         <div class="mb-4 grid h-14 w-14 place-items-center rounded-full bg-red-100">
-          <Trash2 class="h-6 w-6 text-red-600" />
+          <span class="ms !text-[24px] text-red-600" aria-hidden="true">delete</span>
         </div>
         <h2 class="display-font text-xl font-bold text-[var(--espresso)]">{language.t('removeMember')}</h2>
         <p class="mt-2 text-sm text-[var(--text-muted)]">
@@ -438,7 +437,7 @@
              role="dialog" aria-modal="true">
       <div class="flex items-center gap-4 border-b border-[var(--border)] p-5">
         <h2 class="display-font flex-1 text-2xl font-bold text-[var(--espresso)]">{language.t('resetPassword')}</h2>
-        <button class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)] hover:text-[var(--espresso)]" onclick={closeResetPw} aria-label={language.t('close')}><X class="h-4 w-4" /></button>
+        <button class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)] hover:text-[var(--espresso)]" onclick={closeResetPw} aria-label={language.t('close')}><span class="ms !text-[16px]" aria-hidden="true">close</span></button>
       </div>
 
       <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">

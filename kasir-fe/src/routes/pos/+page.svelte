@@ -9,7 +9,6 @@
   import { getItemPrice } from '$lib/utils/catalog';
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
   import { getChoiceLabel, getChoicePrice, getGroupChoices, getGroupLabel, hasItemModifiers } from '$lib/utils/modifiers';
-  import { LayoutGrid, List, RotateCcw, Search, ShoppingCart, Tag, X } from 'lucide-svelte';
   import { printEscPos, canPrint } from '$lib/utils/bluetooth-printer';
   import { buildReceiptBytes } from '$lib/utils/escpos';
 
@@ -519,7 +518,7 @@
   >
     <section class="cash-modal" role="dialog" aria-modal="true">
       <div class="cash-modal-header">
-        <button class="icon-btn" onclick={() => cashModalOpen = false}><X size={18} /></button>
+        <button class="icon-btn" onclick={() => cashModalOpen = false}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
         <div style="text-align: right;">
           <div class="cash-modal-label">{language.t('payment')} CASH</div>
           <div class="cash-modal-total">{formatRupiah(totalDue)}</div>
@@ -531,7 +530,7 @@
 
       <div class="cash-display">
         <button class="calc-back-btn" onclick={() => cashAmount = '0'} aria-label={language.t('clear')}>
-          <RotateCcw size={16} />
+          <span class="ms !text-[16px]" aria-hidden="true">undo</span>
         </button>
         <div style="text-align: right;">
           <div class="cash-lbl">{language.t('amountPaid')}</div>
@@ -587,7 +586,7 @@
     <section class="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-[var(--white)] md:rounded-3xl" role="dialog" aria-modal="true">
       <div class="flex items-center gap-4 border-b border-[var(--border)] p-5">
         <h2 class="display-font flex-1 text-2xl font-bold text-[var(--espresso)]">{language.t('selectTable')}</h2>
-        <button class="icon-btn" onclick={() => tableModalOpen = false} aria-label={language.t('close')}><X size={18} /></button>
+        <button class="icon-btn" onclick={() => tableModalOpen = false} aria-label={language.t('close')}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto p-5">
         <div class="grid grid-cols-4 gap-2">
@@ -693,12 +692,12 @@
 
       <div class="pos-tools">
         <label class="search-box">
-          <Search size={18} />
+          <span class="ms !text-[18px]" aria-hidden="true">search</span>
           <input placeholder={language.t('searchMenu')} bind:value={search} />
         </label>
         <div class="view-toggle" role="group" aria-label={language.t('menu')}>
-          <button class="view-btn {viewMode === 'grid' ? 'view-btn--active' : ''}" aria-pressed={viewMode === 'grid'} aria-label="Grid" onclick={() => setViewMode('grid')}><LayoutGrid size={20} /></button>
-          <button class="view-btn {viewMode === 'list' ? 'view-btn--active' : ''}" aria-pressed={viewMode === 'list'} aria-label="List" onclick={() => setViewMode('list')}><List size={20} /></button>
+          <button class="view-btn {viewMode === 'grid' ? 'view-btn--active' : ''}" aria-pressed={viewMode === 'grid'} aria-label="Grid" onclick={() => setViewMode('grid')}><span class="ms !text-[20px]" aria-hidden="true">grid_view</span></button>
+          <button class="view-btn {viewMode === 'list' ? 'view-btn--active' : ''}" aria-pressed={viewMode === 'list'} aria-label="List" onclick={() => setViewMode('list')}><span class="ms !text-[20px]" aria-hidden="true">format_list_bulleted</span></button>
         </div>
       </div>
     </div>
@@ -810,7 +809,7 @@
         <span class="mobile-cart-count">{totalItems}</span>
         <span class="mobile-cart-lbl">{language.t('order')}</span>
         <span class="mobile-cart-total">{formatRupiah(subtotal)}</span>
-        <ShoppingCart size={18} />
+        <span class="ms !text-[18px]" aria-hidden="true">shopping_cart</span>
       </button>
     {/if}
   </section>
@@ -884,7 +883,7 @@
       <div class="discount-row">
         {#if promoResult?.valid && promoResult.discount_amount > 0}
           <div class="discount-chip">
-            <Tag size={13} class="shrink-0" />
+            <span class="ms !text-[13px] shrink-0" aria-hidden="true">sell</span>
             <span class="discount-chip-label">
               {appliedDiscountLabel || language.t('discounts')}
               <span class="discount-chip-savings">· {language.t('discountSavings')} {formatRupiah(promoResult.discount_amount)}</span>
@@ -894,7 +893,7 @@
         {:else if promoResult !== null && !promoResult.valid}
           <div class="discount-err-row">
             <button class="discount-trigger" onclick={() => discountModalOpen = true}>
-              <Tag size={13} />
+              <span class="ms !text-[13px]" aria-hidden="true">sell</span>
               <span>{language.t('addDiscount')}</span>
             </button>
             <span class="discount-err-msg">{promoResult.message}</span>
@@ -904,7 +903,7 @@
             class="discount-trigger {promoLoading ? 'discount-trigger--loading' : ''}"
             onclick={() => discountModalOpen = true}
           >
-            <Tag size={13} />
+            <span class="ms !text-[13px]" aria-hidden="true">sell</span>
             <span>{promoLoading ? language.t('checking') : language.t('addDiscount')}</span>
           </button>
         {/if}
@@ -982,7 +981,7 @@
         </div>
         <div class="flex items-center gap-3">
           {#if totalItems > 0}<span class="cart-badge">{totalItems}</span>{/if}
-          <button class="icon-btn" onclick={() => mobileCartOpen = false}><X size={18} /></button>
+          <button class="icon-btn" onclick={() => mobileCartOpen = false}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
         </div>
       </div>
 
@@ -1029,7 +1028,7 @@
         <div class="discount-row">
           {#if promoResult?.valid && promoResult.discount_amount > 0}
             <div class="discount-chip">
-              <Tag size={13} class="shrink-0" />
+              <span class="ms !text-[13px] shrink-0" aria-hidden="true">sell</span>
               <span class="discount-chip-label">
                 {appliedDiscountLabel || language.t('discounts')}
                 <span class="discount-chip-savings">· {language.t('discountSavings')} {formatRupiah(promoResult.discount_amount)}</span>
@@ -1039,7 +1038,7 @@
           {:else if promoResult !== null && !promoResult.valid}
             <div class="discount-err-row">
               <button class="discount-trigger" onclick={() => discountModalOpen = true}>
-                <Tag size={13} />
+                <span class="ms !text-[13px]" aria-hidden="true">sell</span>
                 <span>{language.t('addDiscount')}</span>
               </button>
               <span class="discount-err-msg">{promoResult.message}</span>
@@ -1049,7 +1048,7 @@
               class="discount-trigger {promoLoading ? 'discount-trigger--loading' : ''}"
               onclick={() => discountModalOpen = true}
             >
-              <Tag size={13} />
+              <span class="ms !text-[13px]" aria-hidden="true">sell</span>
               <span>{promoLoading ? language.t('checking') : language.t('addDiscount')}</span>
             </button>
           {/if}
@@ -1094,7 +1093,7 @@
   <div class="sheet-backdrop receipt-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) closeReceipt(); }}>
     <section class="receipt-modal" role="dialog" aria-modal="true">
       <div class="flex justify-end px-3 pt-3 print:hidden">
-        <button class="icon-btn" onclick={closeReceipt} aria-label={language.t('close')}><X size={16} /></button>
+        <button class="icon-btn" onclick={closeReceipt} aria-label={language.t('close')}><span class="ms !text-[16px]" aria-hidden="true">close</span></button>
       </div>
       <div class="receipt-head">
         {#if session.selectedStore?.show_logo !== false && session.selectedStore?.logo_url}
@@ -1197,7 +1196,7 @@
     <section class="discount-modal-shell" role="dialog" aria-modal="true">
       <div class="flex items-center gap-4 border-b border-[var(--border)] p-5">
         <h2 class="display-font flex-1 text-2xl font-bold text-[var(--espresso)]">{language.t('chooseDiscount')}</h2>
-        <button class="icon-btn" onclick={() => discountModalOpen = false} aria-label={language.t('close')}><X size={18} /></button>
+        <button class="icon-btn" onclick={() => discountModalOpen = false} aria-label={language.t('close')}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-5 space-y-5">
@@ -1291,7 +1290,7 @@
           <h2 class="display-font modifier-name">{modifierItem.name}</h2>
           <p class="modifier-base">{language.t('base')} {formatRupiah(itemPrice(modifierItem))}</p>
         </div>
-        <button class="icon-btn" onclick={closeModifierModal}><X size={18} /></button>
+        <button class="icon-btn" onclick={closeModifierModal}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
       </div>
 
       <div class="modifier-body">

@@ -65,6 +65,7 @@ async def list_ingredients(
     db: AsyncSession,
     search: str | None = None,
     low_stock: bool = False,
+    level: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[Ingredient], int]:
@@ -74,6 +75,11 @@ async def list_ingredients(
         cond.append(Ingredient.name.ilike(like) | Ingredient.category.ilike(like))
     if low_stock:
         cond.append(Ingredient.stock <= Ingredient.min_stock)
+    critical = (Ingredient.stock < Ingredient.min_stock / 2) | (Ingredient.stock < 0)
+    if level == "critical":  # under half of min_stock
+        cond.append(critical)
+    elif level == "low":  # at or under min_stock, not yet critical
+        cond.append((Ingredient.stock <= Ingredient.min_stock) & ~critical)
     total = (await db.execute(select(func.count()).select_from(Ingredient).where(*cond))).scalar_one()
     q = select(Ingredient).where(*cond).order_by(Ingredient.name).limit(limit).offset(offset)
     return list((await db.execute(q)).scalars().all()), total

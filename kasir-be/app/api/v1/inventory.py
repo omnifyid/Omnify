@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,13 +43,14 @@ async def list_ingredients(
     store_id: uuid.UUID,
     search: str | None = None,
     low_stock: bool = False,
+    level: Literal["low", "critical"] | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     _: StoreMembership = Depends(AnyMember),
     db: AsyncSession = Depends(get_db),
 ):
     items, total = await inventory_service.list_ingredients(
-        store_id, db, search, low_stock, limit, offset
+        store_id, db, search, low_stock, level, limit, offset
     )
     return PaginatedResponse(items=items, total=total, limit=limit, offset=offset)
 

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { ArrowDownLeft, ArrowUpRight, Lock, Wallet } from 'lucide-svelte';
   import { api } from '$lib/api/client';
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
@@ -105,7 +104,7 @@
     style="min-height: var(--om-tap)"
     onclick={onChip}
   >
-    <Wallet class="h-4 w-4" />
+    <span class="ms !text-[16px]" aria-hidden="true">account_balance_wallet</span>
     {#if shift}
       <span class="hidden lg:inline">{shift.opened_by_name ?? ''} · {language.t('shiftSince')} {sinceLabel} ·</span>
       <span class="tabular-nums">{cashLabel}</span>
@@ -120,9 +119,9 @@
         <div class="text-xs text-[var(--text-muted)]">{language.t('shiftCashOnHand')}</div>
         <div class="text-xl font-bold tabular-nums">{cashLabel}</div>
       </div>
-      <button class="flex w-full items-center gap-2 px-3 py-3 text-left text-sm hover:bg-[var(--cream)]" onclick={() => show('in')}><ArrowDownLeft class="h-4 w-4" />{language.t('shiftCashIn')}</button>
-      <button class="flex w-full items-center gap-2 px-3 py-3 text-left text-sm hover:bg-[var(--cream)]" onclick={() => show('out')}><ArrowUpRight class="h-4 w-4" />{language.t('shiftCashOut')}</button>
-      <button class="flex w-full items-center gap-2 px-3 py-3 text-left text-sm font-semibold text-red-700 hover:bg-red-50" onclick={() => show('close')}><Lock class="h-4 w-4" />{language.t('shiftClose')}</button>
+      <button class="flex w-full items-center gap-2 px-3 py-3 text-left text-sm hover:bg-[var(--cream)]" onclick={() => show('in')}><span class="ms !text-[16px]" aria-hidden="true">south_west</span>{language.t('shiftCashIn')}</button>
+      <button class="flex w-full items-center gap-2 px-3 py-3 text-left text-sm hover:bg-[var(--cream)]" onclick={() => show('out')}><span class="ms !text-[16px]" aria-hidden="true">north_east</span>{language.t('shiftCashOut')}</button>
+      <button class="flex w-full items-center gap-2 px-3 py-3 text-left text-sm font-semibold text-red-700 hover:bg-red-50" onclick={() => show('close')}><span class="ms !text-[16px]" aria-hidden="true">lock</span>{language.t('shiftClose')}</button>
     </div>
   {/if}
 </div>

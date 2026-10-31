@@ -10,7 +10,9 @@ Design spec and prototype: `doc/new-ui/` (`README.md`, `tokens.css`, `Omnify.dc.
 |------|--------|
 | UI / body / headings | `Geist` (400–700) |
 | Wordmark `>omnify▌` | `JetBrains Mono` 800 — class `.logo-font` |
-| Shell icons | Material Symbols Rounded — `<span class="ms">icon_name</span>` (`.fill` for active). Page content still uses `lucide-svelte`. |
+| Icons | Material Symbols Rounded only: `<span class="ms" aria-hidden="true">icon_name</span>`; size with `!text-[16px]` (default 24px), `.fill` for active. No other icon library. |
+
+The icon font is self-hosted in `src/assets/fonts/material-symbols-rounded.woff2` (weight 400, FILL axis only, about 540 KB) so icons work offline and in the Capacitor app. Regenerate it with `fonttools varLib.instancer material-symbols-rounded-latin-fill-normal.woff2 wght=400` on the `fill` file of `@fontsource-variable/material-symbols-rounded`. Any icon name in the font works without rebuilding it.
 
 Numbers use tabular figures (set on `body`). Type scale: 12 · 14 · 16 · 20 · 24 px (plus 28+ for display).
 

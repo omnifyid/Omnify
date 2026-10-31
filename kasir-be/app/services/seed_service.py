@@ -177,7 +177,7 @@ INGREDIENTS = [
 ]
 # senopati keeps a smaller list; bsd has none
 SENOPATI_SKIP = {"Pasta Spaghetti", "Nasi Putih", "Ayam Fillet", "Pisang", "Teh Hitam"}
-LOW_STOCK = {"Susu Segar", "Matcha Powder", "Telur"}  # left under min_stock so the low-stock KPI shows
+LOW_STOCK = {"Susu Segar": 0.4, "Matcha Powder": 0.4, "Telur": 0.75}  # share of min_stock left: under 0.5 is Kritis, under 1 Menipis
 
 HOT, ICED = "Cup Kertas 8oz", "Cup Plastik 12oz"
 RECIPES = {
@@ -870,7 +870,7 @@ def _gen_stock(ctx: _Ctx, orders: list[dict]) -> list[StockMovement]:
             events.sort(key=lambda e: e[0])
             if name in LOW_STOCK:  # spoilage found at the last count leaves it under min_stock
                 final = sum((e[2] for e in events), Decimal(0))
-                target = (Decimal(ing.min_stock) * Decimal("0.4")).quantize(Decimal("1"))
+                target = (Decimal(ing.min_stock) * Decimal(str(LOW_STOCK[name]))).quantize(Decimal("1"))
                 if final > target:
                     events.append((ctx.now - timedelta(minutes=30), "OPNAME", target - final, None, "Stock opname: barang rusak"))
                     events.sort(key=lambda e: e[0])

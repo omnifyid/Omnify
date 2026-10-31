@@ -6,7 +6,6 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import type { AdminStore, User, PaginatedResponse } from '$lib/api/types';
-  import { ChevronRight, X, Search } from 'lucide-svelte';
 
   // ── Stats ─────────────────────────────────────────────────
   let statsStores = $state<number | null>(null);
@@ -382,7 +381,7 @@
   <!-- Search bar -->
   <div class="border-b border-[var(--border)] p-4">
     <div class="relative max-w-sm">
-      <Search size={15} class="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+      <span class="ms !text-[15px] absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" aria-hidden="true">search</span>
       <input
         class="field pl-9"
         type="text"
@@ -466,7 +465,7 @@
           <h2 class="display-font text-xl font-bold text-[var(--espresso)]">Add Store</h2>
           <p class="text-sm text-[var(--text-muted)]">Create a new store and assign an owner.</p>
         </div>
-        <button class="icon-btn flex-shrink-0" onclick={closeStoreModal}><X size={18} /></button>
+        <button class="icon-btn flex-shrink-0" onclick={closeStoreModal}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
       </div>
 
       <form class="min-h-0 flex-1 overflow-y-auto p-5" onsubmit={(e) => { e.preventDefault(); submitCreateStore(); }}>
@@ -559,11 +558,11 @@
               disabled={editUserLoading}
             >
               {editUserLoading ? 'Loading…' : editStore.owner_email}
-              {#if !editUserLoading}<ChevronRight class="h-3 w-3" />{/if}
+              {#if !editUserLoading}<span class="ms !text-[12px]" aria-hidden="true">chevron_right</span>{/if}
             </button>
           {/if}
         </div>
-        <button class="icon-btn flex-shrink-0" onclick={closeEdit}><X size={18} /></button>
+        <button class="icon-btn flex-shrink-0" onclick={closeEdit}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-5">
@@ -632,7 +631,7 @@
           <h2 class="display-font text-xl font-bold text-[var(--espresso)]">Add User</h2>
           <p class="text-sm text-[var(--text-muted)]">Create a new user account.</p>
         </div>
-        <button class="icon-btn flex-shrink-0" onclick={closeUserModal}><X size={18} /></button>
+        <button class="icon-btn flex-shrink-0" onclick={closeUserModal}><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
       </div>
 
       <form class="min-h-0 flex-1 overflow-y-auto p-5" onsubmit={(e) => { e.preventDefault(); submitCreateUser(); }}>
@@ -684,7 +683,7 @@
           <h2 class="display-font text-xl font-bold text-[var(--espresso)]">Edit Owner</h2>
           <p class="truncate text-sm text-[var(--text-muted)]">{editUser.email}</p>
         </div>
-        <button class="icon-btn flex-shrink-0" onclick={closeEditUser} aria-label="Tutup"><X size={18} /></button>
+        <button class="icon-btn flex-shrink-0" onclick={closeEditUser} aria-label="Tutup"><span class="ms !text-[18px]" aria-hidden="true">close</span></button>
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-5 space-y-4">

@@ -16,7 +16,6 @@
   import { chip, CHIP_ROW, SEG_GROUP, seg } from '$lib/utils/ui';
   import CatalogNotice from './CatalogNotice.svelte';
   import { getChoiceLabel, getChoicePrice, getGroupChoices, getGroupLabel } from '$lib/utils/modifiers';
-  import { Search, SlidersHorizontal, Trash2, X } from 'lucide-svelte';
 
   let { tabs }: { tabs?: Snippet } = $props();
 
@@ -594,7 +593,7 @@
     <section class="flex h-full w-full max-w-[440px] flex-col overflow-hidden bg-white shadow-[var(--om-sh-drawer)]" style="animation: omUp .2s ease" role="dialog" aria-modal="true">
       <div class="flex items-center gap-4 border-b border-[var(--border)] p-5">
         <h2 class="flex-1 text-[16px] font-semibold">{language.t('newProduct')}</h2>
-        <button class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)] hover:text-[var(--espresso)]" onclick={closeCreateModal} aria-label={language.t('close')}><X class="h-4 w-4" /></button>
+        <button class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)] hover:text-[var(--espresso)]" onclick={closeCreateModal} aria-label={language.t('close')}><span class="ms !text-[16px]" aria-hidden="true">close</span></button>
       </div>
       <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">
         <PhotoField bind:file={createImageFile} uploading={false} />
@@ -813,7 +812,7 @@
                       <input type="checkbox" bind:checked={group.required} class="accent-[var(--espresso)]" />
                       {language.t('required')}
                     </label>
-                    <button type="button" class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-red-200 bg-red-50 text-red-400 transition-colors hover:bg-red-100 hover:text-red-600" title={language.t('removeGroup')} onclick={() => removeOptionGroup(groupIndex)}><Trash2 class="h-3.5 w-3.5" /></button>
+                    <button type="button" class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-red-200 bg-red-50 text-red-400 transition-colors hover:bg-red-100 hover:text-red-600" title={language.t('removeGroup')} onclick={() => removeOptionGroup(groupIndex)}><span class="ms !text-[14px]" aria-hidden="true">delete</span></button>
                   </div>
                   <div class="flex flex-wrap items-center gap-1.5">
                     {#each group.choices as choice, choiceIndex (choice.name)}
@@ -821,7 +820,7 @@
                         <button type="button" class="flex h-full items-center gap-1 pl-3 pr-1.5" aria-pressed={choice.is_default} title={language.t('optionDefaultHint')} onclick={() => toggleOptionDefault(groupIndex, choiceIndex)}>
                           {#if choice.is_default}<span class="ms !text-[16px] text-[var(--om-brand)]">check_circle</span>{/if}{choice.name}
                         </button>
-                        <button type="button" class="grid h-full w-8 place-items-center text-[var(--text-muted)] hover:text-red-500" title={language.t('removeChoice')} aria-label={language.t('removeChoice')} onclick={() => removeOptionChoice(groupIndex, choiceIndex)}><X class="h-3.5 w-3.5" /></button>
+                        <button type="button" class="grid h-full w-8 place-items-center text-[var(--text-muted)] hover:text-red-500" title={language.t('removeChoice')} aria-label={language.t('removeChoice')} onclick={() => removeOptionChoice(groupIndex, choiceIndex)}><span class="ms !text-[14px]" aria-hidden="true">close</span></button>
                       </span>
                     {/each}
                     <input
@@ -860,7 +859,7 @@
                       <span class="mb-0.5 block text-center text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('max')}</span>
                       <input class="field py-2 text-center text-sm" type="number" min="0" placeholder="∞" bind:value={group.max_select} />
                     </div>
-                    <button type="button" class="mb-0.5 grid h-[2.375rem] w-8 shrink-0 place-items-center rounded-lg border border-red-200 bg-red-50 text-red-400 transition-colors hover:bg-red-100 hover:text-red-600" title={language.t('removeGroup')} onclick={() => removeAddonGroup(groupIndex)}><Trash2 class="h-3.5 w-3.5" /></button>
+                    <button type="button" class="mb-0.5 grid h-[2.375rem] w-8 shrink-0 place-items-center rounded-lg border border-red-200 bg-red-50 text-red-400 transition-colors hover:bg-red-100 hover:text-red-600" title={language.t('removeGroup')} onclick={() => removeAddonGroup(groupIndex)}><span class="ms !text-[14px]" aria-hidden="true">delete</span></button>
                   </div>
                   <div class="mb-1 flex items-center gap-1.5 px-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">
                     <span class="flex-1">{language.t('name')}</span>
@@ -872,7 +871,7 @@
                       <div class="flex items-center gap-1.5">
                         <input class="field min-w-0 flex-1 py-2 text-sm" placeholder="e.g. Extra Shot" bind:value={choice.name} />
                         <div class="w-[6.5rem] shrink-0"><input class="field py-2 text-right text-sm" type="number" min="0" placeholder="0" bind:value={choice.extra_price} /></div>
-                        <button type="button" class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-500" title={language.t('removeChoice')} onclick={() => removeAddonChoice(groupIndex, choiceIndex)}><X class="h-3.5 w-3.5" /></button>
+                        <button type="button" class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-500" title={language.t('removeChoice')} onclick={() => removeAddonChoice(groupIndex, choiceIndex)}><span class="ms !text-[14px]" aria-hidden="true">close</span></button>
                       </div>
                     {/each}
                   </div>
@@ -911,7 +910,7 @@
     <section class="w-full max-w-sm overflow-hidden rounded-3xl bg-[var(--white)] shadow-2xl" role="dialog" aria-modal="true">
       <div class="flex flex-col items-center px-6 pt-7 pb-5 text-center">
         <div class="mb-4 grid h-14 w-14 place-items-center rounded-full bg-red-100">
-          <Trash2 class="h-6 w-6 text-red-600" />
+          <span class="ms !text-[24px] text-red-600" aria-hidden="true">delete</span>
         </div>
         <h2 class="display-font text-xl font-bold text-[var(--espresso)]">{language.t('deleteProduct')}</h2>
         <p class="mt-2 text-sm text-[var(--text-muted)]">

@@ -5,7 +5,6 @@
   import { api } from '$lib/api/client';
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
-  import { ExternalLink, Printer, RefreshCw } from 'lucide-svelte';
 
   let tableCount = $derived(session.selectedStore?.pos_table_count ?? 10);
   let tablePrefix = $state('Meja');
@@ -114,7 +113,7 @@
     </div>
     {#if qrDataUrls.length > 0}
       <button class="btn-primary no-print flex-shrink-0 flex items-center gap-2" onclick={printAll}>
-        <Printer class="h-4 w-4" />
+        <span class="ms !text-[16px]" aria-hidden="true">print</span>
         {language.t('printAll')}
       </button>
     {/if}
@@ -169,7 +168,7 @@
         disabled={generating || !storeId}
         onclick={generate}
       >
-        <RefreshCw class="h-4 w-4 {generating ? 'animate-spin' : ''}" />
+        <span class="ms !text-[16px] {generating ? 'animate-spin' : ''}" aria-hidden="true">refresh</span>
         {generating ? language.t('generating') : language.t('generate')}
       </button>
     </div>
@@ -193,14 +192,14 @@
               class="btn-outline flex flex-1 items-center justify-center gap-1.5 text-sm"
               onclick={() => openSelfOrder(i + 1)}
             >
-              <ExternalLink class="h-3.5 w-3.5" />
+              <span class="ms !text-[14px]" aria-hidden="true">open_in_new</span>
               {language.t('open')}
             </button>
             <button
               class="btn-outline flex flex-1 items-center justify-center gap-1.5 text-sm"
               onclick={() => printSingle(i)}
             >
-              <Printer class="h-3.5 w-3.5" />
+              <span class="ms !text-[14px]" aria-hidden="true">print</span>
               {language.t('print')}
             </button>
           </div>

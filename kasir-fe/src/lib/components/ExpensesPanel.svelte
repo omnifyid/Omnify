@@ -1,6 +1,5 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { Plus, Trash2, CalendarSync } from 'lucide-svelte';
   import { api } from '$lib/api/client';
   import { paginatedItems } from '$lib/api/pagination';
   import type { Expense, ExpenseSource, ExpenseSummary, PaginatedResponse } from '$lib/api/types';
@@ -165,7 +164,7 @@
     <option value="">{language.t('finAllSources')}</option>
     {#each SOURCES as s}<option value={s.id}>{language.t(s.key)}</option>{/each}
   </select>
-  <button class="btn-primary ml-auto flex items-center gap-2" onclick={openCreate}><Plus class="h-4 w-4" />{language.t('finAddExpense')}</button>
+  <button class="btn-primary ml-auto flex items-center gap-2" onclick={openCreate}><span class="ms !text-[16px]" aria-hidden="true">add</span>{language.t('finAddExpense')}</button>
 </div>
 
 {#if summary}
@@ -200,7 +199,7 @@
       <div class="font-medium">{e.category}</div>
       <div class="flex min-w-0 items-center gap-1.5">
         <span class="truncate">{e.description}</span>
-        {#if e.recurring}<span class="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-700"><CalendarSync class="h-3.5 w-3.5" />{language.t('finRecurring')}</span>{/if}
+        {#if e.recurring}<span class="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-700"><span class="ms !text-[14px]" aria-hidden="true">event_repeat</span>{language.t('finRecurring')}</span>{/if}
       </div>
       <div class="text-sm">{srcLabel(e.source)}</div>
       <div class="font-bold tabular-nums md:text-right">{formatRupiah(e.amount)}</div>
@@ -208,7 +207,7 @@
         <span class="rounded-full px-2.5 py-1 text-xs font-bold {draft ? 'bg-amber-100 text-amber-800' : 'bg-[var(--light-brown)] text-[var(--om-brand)]'}">{draft ? language.t('finDraft') : language.t('finPosted')}</span>
         {#if draft}
           <button class="btn-outline px-2.5 py-1.5 text-xs" disabled={busyId === e.id} onclick={() => act(e, 'confirm')}>{language.t('finConfirm')}</button>
-          <button class="grid h-8 w-8 place-items-center rounded-lg border border-[var(--border)] text-red-600 hover:bg-red-50" aria-label={language.t('finDeleteDraft')} disabled={busyId === e.id} onclick={() => act(e, 'delete')}><Trash2 class="h-4 w-4" /></button>
+          <button class="grid h-8 w-8 place-items-center rounded-lg border border-[var(--border)] text-red-600 hover:bg-red-50" aria-label={language.t('finDeleteDraft')} disabled={busyId === e.id} onclick={() => act(e, 'delete')}><span class="ms !text-[16px]" aria-hidden="true">delete</span></button>
         {/if}
       </div>
     </div>

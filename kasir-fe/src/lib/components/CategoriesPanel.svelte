@@ -9,7 +9,6 @@
   import { language } from '$lib/i18n/language.svelte';
   import CatalogNotice from './CatalogNotice.svelte';
   import { session } from '$lib/stores/session.svelte';
-  import { Trash2, X } from 'lucide-svelte';
 
   const categoryIcons = [
     { icon: '☕', label: 'Coffee' },
@@ -317,7 +316,7 @@
     <section class="flex h-full w-full max-w-[440px] flex-col overflow-hidden bg-white shadow-[var(--om-sh-drawer)]" style="animation: omUp .2s ease" role="dialog" aria-modal="true">
       <div class="flex items-center gap-4 border-b border-[var(--border)] p-5">
         <h2 class="flex-1 text-[16px] font-semibold">{modalEditing ? language.t('editCategory') : language.t('newCategory')}</h2>
-        <button class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)] hover:text-[var(--espresso)]" onclick={closeModal} aria-label={language.t('close')}><X class="h-4 w-4" /></button>
+        <button class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)] hover:text-[var(--espresso)]" onclick={closeModal} aria-label={language.t('close')}><span class="ms !text-[16px]" aria-hidden="true">close</span></button>
       </div>
 
       <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
@@ -350,7 +349,7 @@
             class="flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-600 transition hover:bg-red-100"
             onclick={openDeleteConfirm}
           >
-            <Trash2 class="h-4 w-4" />
+            <span class="ms !text-[16px]" aria-hidden="true">delete</span>
             {language.t('delete')}
           </button>
         {/if}
@@ -370,7 +369,7 @@
     <section class="w-full max-w-sm overflow-hidden rounded-3xl bg-[var(--white)] shadow-2xl" role="dialog" aria-modal="true">
       <div class="flex flex-col items-center px-6 pb-5 pt-7 text-center">
         <div class="mb-4 grid h-14 w-14 place-items-center rounded-full bg-red-100">
-          <Trash2 class="h-6 w-6 text-red-600" />
+          <span class="ms !text-[24px] text-red-600" aria-hidden="true">delete</span>
         </div>
         <h2 class="display-font text-xl font-bold text-[var(--espresso)]">{language.t('deleteCategory')}</h2>
         <p class="mt-2 text-sm text-[var(--text-muted)]">

@@ -8,7 +8,6 @@
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
   import { printEscPos, canPrint } from '$lib/utils/bluetooth-printer';
   import { buildKitchenTicketBytes, buildReceiptBytes } from '$lib/utils/escpos';
-  import { ArrowLeft, Ban, CheckCircle2, Printer, X } from 'lucide-svelte';
 
   let order = $state<Order | null>(null);
   let error = $state('');
@@ -143,7 +142,7 @@
   class="mb-5 flex items-center gap-1.5 text-sm font-bold text-[var(--text-muted)] transition-colors hover:text-[var(--espresso)]"
   onclick={() => goto('/transactions')}
 >
-  <ArrowLeft class="h-4 w-4" />
+  <span class="ms !text-[16px]" aria-hidden="true">arrow_back</span>
   {language.t('transactions')}
 </button>
 
@@ -253,7 +252,7 @@
           class="btn-primary mt-4 flex w-full items-center justify-center gap-2"
           onclick={openReceipt}
         >
-          <Printer class="h-4 w-4" />
+          <span class="ms !text-[16px]" aria-hidden="true">print</span>
           {language.t('printReceipt')}
         </button>
       </div>
@@ -279,7 +278,7 @@
                 disabled={savingStatus !== null}
                 onclick={() => updateStatus('CONFIRMED')}
               >
-                <CheckCircle2 class="h-4 w-4" />
+                <span class="ms !text-[16px]" aria-hidden="true">check_circle</span>
               {savingStatus === 'CONFIRMED' ? language.t('processing') : language.t('confirm')}
               </button>
             {/if}
@@ -288,7 +287,7 @@
               disabled={savingStatus !== null}
               onclick={() => updateStatus('COMPLETED')}
             >
-              <CheckCircle2 class="h-4 w-4" />
+              <span class="ms !text-[16px]" aria-hidden="true">check_circle</span>
               {savingStatus === 'COMPLETED' ? language.t('processing') : language.t('complete')}
             </button>
             <button
@@ -296,7 +295,7 @@
               disabled={savingStatus !== null}
               onclick={() => updateStatus('CANCELLED')}
             >
-              <Ban class="h-4 w-4" />
+              <span class="ms !text-[16px]" aria-hidden="true">block</span>
               {savingStatus === 'CANCELLED' ? language.t('processing') : language.t('cancel')}
             </button>
           </div>
@@ -334,7 +333,7 @@
       aria-modal="true"
     >
       <div class="no-print flex justify-end px-3 pt-3">
-        <button class="grid h-8 w-8 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)] hover:text-[var(--espresso)]" onclick={closeReceipt} aria-label={language.t('close')}><X class="h-4 w-4" /></button>
+        <button class="grid h-8 w-8 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)] hover:text-[var(--espresso)]" onclick={closeReceipt} aria-label={language.t('close')}><span class="ms !text-[16px]" aria-hidden="true">close</span></button>
       </div>
       <!-- Receipt content (printed) -->
       <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5 text-center font-mono text-sm">
@@ -434,7 +433,7 @@
   <div class="fixed inset-0 z-50 flex items-end justify-center bg-[var(--om-scrim)] md:items-center" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) closeTicket(); }}>
     <section class="receipt-modal flex max-h-[90vh] w-full max-w-xs flex-col overflow-hidden rounded-t-3xl bg-white md:rounded-3xl" role="dialog" aria-modal="true">
       <div class="no-print flex justify-end px-3 pt-3">
-        <button class="grid h-8 w-8 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)]" onclick={closeTicket} aria-label={language.t('close')}><X class="h-4 w-4" /></button>
+        <button class="grid h-8 w-8 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)]" onclick={closeTicket} aria-label={language.t('close')}><span class="ms !text-[16px]" aria-hidden="true">close</span></button>
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5 font-mono text-sm">
         <div class="text-center">

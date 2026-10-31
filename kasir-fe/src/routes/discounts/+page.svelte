@@ -237,6 +237,32 @@
       : null;
   }
 
+  function isExpired(d: Discount): boolean {
+    if (!d.expires_at) return false;
+    const v = /Z$|[+-]\d\d:\d\d$/.test(d.expires_at) ? d.expires_at : d.expires_at + 'Z';
+    return new Date(v) < new Date();
+  }
+
+  function discountNote(d: Discount): string {
+    if (d.scope === 'ORDER') return language.t('all') + ' ' + language.t('items');
+    if (d.target_type === 'CATEGORY') return d.target_category_name ?? language.t('category');
+    if (d.target_type === 'ITEM') return d.target_item_name ?? language.t('item');
+    return language.t('all') + ' ' + language.t('items');
+  }
+
+  async function toggleActive(d: Discount) {
+    const storeId = session.selectedStore?.id;
+    if (!storeId) return;
+    const next = !d.is_active;
+    d.is_active = next;
+    try {
+      await api.patch(`/stores/${storeId}/discounts/${d.id}`, { is_active: next });
+    } catch (err) {
+      d.is_active = !next;
+      error = err instanceof Error ? err.message : language.t('error');
+    }
+  }
+
   $effect(() => {
     const storeId = session.selectedStore?.id;
     if (storeId && storeId !== loadedStoreId) { page = 1; untrack(() => void load()); }
@@ -257,76 +283,74 @@
   <div class="mb-5 rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">{error}</div>
 {/if}
 
-<!-- Discounts list -->
-<div class="card overflow-hidden">
-  <div class="hidden grid-cols-[1fr_110px_150px_80px_80px] border-b border-[var(--border)] bg-[var(--cream)] px-4 py-3 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)] md:grid">
-    <div>{language.t('name')} / {language.t('code')}</div>
-    <div class="text-right">{language.t('value')}</div>
-    <div class="pl-4">Scope · {language.t('target')}</div>
-    <div>{language.t('automatic')}</div>
-    <div>{language.t('status')}</div>
-  </div>
-
-  {#each discounts as d}
+<!-- Discounts grid -->
+<div class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3.5">
+  {#each discounts as d (d.id)}
     <div
-      class="group grid cursor-pointer grid-cols-[1fr_110px] items-center gap-2 border-b border-[var(--border)] px-4 py-3 last:border-0 transition-colors hover:bg-[var(--cream)] active:bg-[var(--light-brown)]/60 md:grid-cols-[1fr_110px_150px_80px_80px]"
+      class="group flex cursor-pointer flex-col gap-3.5 rounded-[14px] border-[1.5px] p-[18px] transition-colors {isExpired(d) ? 'border-red-300 bg-red-50 hover:bg-red-100/70' : 'bg-[var(--white)] hover:bg-[var(--cream)]'} {isExpired(d) ? '' : d.is_active ? 'border-[var(--espresso)]' : 'border-[var(--border)]'}"
       role="button"
       tabindex="0"
       onclick={() => startEdit(d)}
       onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEdit(d); } }}
       aria-label={`Edit ${d.name}`}
     >
-      <div>
-        <div class="font-semibold text-[var(--espresso)]">{d.name}</div>
-        <div class="mt-0.5 text-xs text-[var(--text-muted)]">
-          {#if d.code}<span class="font-mono">{d.code}</span>{:else}<span class="italic">{language.t('automatic')}</span>{/if}
-          {#if d.used_count != null} · {language.t('used')} {d.used_count}{d.max_uses != null ? `/${d.max_uses}` : ''}×{/if}
-          {#if d.expires_at} · exp {formatDateTime(d.expires_at).slice(0, 10)}{/if}
+      <div class="flex items-start justify-between gap-2.5">
+        <div class="flex min-w-0 flex-col gap-0.5">
+          {#if isExpired(d)}
+            <span class="mb-1 inline-flex w-fit items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white">
+              <span class="ms !text-[14px]" aria-hidden="true">event_busy</span>{language.t('expired')}
+            </span>
+          {/if}
+          <span class="truncate text-base font-semibold {isExpired(d) ? 'text-[var(--text-muted)]' : 'text-[var(--espresso)]'}">{d.name}</span>
+          <span class="text-xs text-[var(--text-muted)]">{discountNote(d)}</span>
+        </div>
+        <div class="text-right">
+          <div class="text-[28px] font-extrabold leading-none {isExpired(d) ? 'text-gray-400 line-through' : 'text-[var(--primary)]'}">{discountValue(d)}</div>
+          {#if discountCap(d)}<div class="mt-1 text-xs text-[var(--text-muted)]">{discountCap(d)}</div>{/if}
         </div>
       </div>
-      <div class="text-right">
-        <div class="text-sm font-semibold text-[var(--espresso)]">{discountValue(d)}</div>
-        {#if discountCap(d)}<div class="text-xs text-[var(--text-muted)]">{discountCap(d)}</div>{/if}
-      </div>
-      <div class="hidden pl-4 md:block">
-        <span class="inline-flex items-center rounded-full bg-[var(--light-brown)] px-2 py-0.5 text-xs font-bold text-[var(--espresso)]">{d.scope}</span>
-        {#if d.scope === 'ITEM' && d.target_type && d.target_type !== 'ALL'}
-          <div class="mt-0.5 text-xs text-[var(--text-muted)]">
-            {#if d.target_type === 'CATEGORY' && d.target_category_id}
-              {d.target_category_name ?? '—'}
-            {:else if d.target_type === 'ITEM' && d.target_item_id}
-              {d.target_item_name ?? '—'}
-            {:else}
-              {language.t('all')} {language.t('items')}
-            {/if}
-          </div>
-        {/if}
-      </div>
-      <div class="hidden md:block">
-        {#if d.is_automatic}<span class="text-xs font-bold text-[var(--warm-brown)]">{language.t('automatic')}</span>{:else}<span class="text-xs text-[var(--text-muted)]">—</span>{/if}
-      </div>
-      <div>
-        {#if d.is_active}
-          <span class="rounded-full bg-green-100 px-2 py-0.5 text-xs font-bold text-green-700">{language.t('active')}</span>
+      <div class="flex items-center gap-2.5 rounded-[10px] border border-dashed border-[#C9CFC4] bg-[var(--cream)] px-3 py-2.5">
+        <span class="ms !text-[20px] text-[var(--text-muted)]" aria-hidden="true">sell</span>
+        {#if d.code}
+          <span class="flex-1 font-mono font-bold tracking-wider {isExpired(d) ? 'text-gray-400 line-through' : ''}">{d.code}</span>
         {:else}
-          <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-bold text-gray-500">{language.t('inactive')}</span>
+          <span class="flex-1 text-sm font-bold text-[var(--warm-brown)]">{language.t('automatic')}</span>
         {/if}
+        <span class="text-xs text-[var(--text-muted)]">{d.used_count ?? 0}{d.max_uses != null ? `/${d.max_uses}` : ''}× {language.t('used')}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-xs {isExpired(d) ? 'font-bold text-red-600' : d.is_active ? 'text-[var(--primary)]' : 'text-[var(--text-muted)]'}">
+          {isExpired(d) ? `${language.t('expired')} ${formatDateTime(d.expires_at!).slice(0, 10)}` : d.is_active ? language.t('active') : language.t('inactive')}{#if d.expires_at && !isExpired(d)} · exp {formatDateTime(d.expires_at).slice(0, 10)}{/if}
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={d.is_active}
+          aria-label={d.name}
+          class="flex min-h-[var(--om-tap,44px)] min-w-[var(--om-tap,44px)] items-center justify-center"
+          onclick={(e) => { e.stopPropagation(); toggleActive(d); }}
+          onkeydown={(e) => e.stopPropagation()}
+        >
+          <span class="flex h-6 w-[42px] rounded-full p-[3px] transition-colors {d.is_active ? 'justify-end bg-[var(--primary)]' : 'justify-start bg-[#C9CFC4]'}">
+            <span class="h-[18px] w-[18px] rounded-full bg-white shadow"></span>
+          </span>
+        </button>
       </div>
     </div>
   {:else}
-    <div class="p-8 text-center text-[var(--text-muted)]">{loading ? language.t('loading') : language.t('noDiscountsYet')}</div>
+    <div class="card col-span-full p-8 text-center text-[var(--text-muted)]">{loading ? language.t('loading') : language.t('noDiscountsYet')}</div>
   {/each}
-
-  {#if totalPages > 1}
-    <div class="flex items-center justify-between gap-3 border-t border-[var(--border)] p-4 text-sm">
-      <span class="text-[var(--text-muted)]">{language.t('page')} {page} {language.t('of')} {totalPages}</span>
-      <div class="flex gap-2">
-        <button class="btn-outline py-1" disabled={page === 1 || loading} onclick={() => goToPage(page - 1)}>{language.t('previous')}</button>
-        <button class="btn-outline py-1" disabled={page === totalPages || loading} onclick={() => goToPage(page + 1)}>{language.t('next')}</button>
-      </div>
-    </div>
-  {/if}
 </div>
+
+{#if totalPages > 1}
+  <div class="mt-4 flex items-center justify-between gap-3 text-sm">
+    <span class="text-[var(--text-muted)]">{language.t('page')} {page} {language.t('of')} {totalPages}</span>
+    <div class="flex gap-2">
+      <button class="btn-outline py-1" disabled={page === 1 || loading} onclick={() => goToPage(page - 1)}>{language.t('previous')}</button>
+      <button class="btn-outline py-1" disabled={page === totalPages || loading} onclick={() => goToPage(page + 1)}>{language.t('next')}</button>
+    </div>
+  </div>
+{/if}
 
 <!-- Create modal -->
 {#if creatingOpen}

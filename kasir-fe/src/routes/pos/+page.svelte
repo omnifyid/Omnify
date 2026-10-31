@@ -178,12 +178,15 @@
 
   let discounts = $state<Discount[]>([]);
   let discountModalOpen = $state(false);
-  let manualCode = $state('');
   let appliedDiscountLabel = $state('');
   let autoPromoTimer: ReturnType<typeof setTimeout> | null = null;
 
-  let autoDiscounts = $derived(discounts.filter((d) => d.is_automatic && d.is_active));
-  let codeDiscounts = $derived(discounts.filter((d) => !d.is_automatic && d.is_active && !!d.code));
+  const usable = (d: Discount) =>
+    d.is_active &&
+    !(d.expires_at && new Date(d.expires_at.endsWith('Z') || /[+-]\d\d:\d\d$/.test(d.expires_at) ? d.expires_at : d.expires_at + 'Z') < new Date()) &&
+    !(d.max_uses != null && d.used_count != null && d.used_count >= d.max_uses);
+  let autoDiscounts = $derived(discounts.filter((d) => d.is_automatic && usable(d)));
+  let codeDiscounts = $derived(discounts.filter((d) => !d.is_automatic && !!d.code && usable(d)));
 
   // payment tiles follow the store's payment settings: one per method, or per EDC bank / QRIS provider
   const WALLET_LOGOS: Record<string, string> = { gopay: 'gopay.svg', ovo: 'Logo_ovo_purple.svg', dana: 'Logo_dana_blue.svg', shopeepay: 'Shopee.svg' };
@@ -670,14 +673,6 @@
     if (cart.length > 0) void checkAutoPromo();
   }
 
-  async function applyManualCode() {
-    if (!manualCode.trim() || cart.length === 0) return;
-    discountCode = manualCode.trim();
-    appliedDiscountLabel = manualCode.trim();
-    discountModalOpen = false;
-    manualCode = '';
-    await checkPromo();
-  }
 
   async function checkout() {
     const storeId = session.selectedStore?.id;
@@ -1422,39 +1417,18 @@
 
       <div class="min-h-0 flex-1 overflow-y-auto p-5 space-y-5">
 
-        <!-- Manual code input -->
-        <div>
-          <div class="discount-section-label">{language.t('enterCode')}</div>
-          <div class="flex gap-2">
-            <input
-              class="field flex-1 text-sm"
-              placeholder={language.t('promoCode')}
-              bind:value={manualCode}
-              onkeydown={(e) => { if (e.key === 'Enter') void applyManualCode(); }}
-            />
-            <button
-              class="promo-btn"
-              disabled={!manualCode.trim() || cart.length === 0 || promoLoading}
-              onclick={applyManualCode}
-            >{promoLoading ? '...' : language.t('apply')}</button>
-          </div>
-          {#if cart.length === 0}
-            <p class="mt-1.5 text-xs text-[var(--text-muted)]">{language.t('addItemsBeforeDiscount')}</p>
-          {/if}
-        </div>
-
         <!-- Code-based discounts -->
         {#if codeDiscounts.length > 0}
           <div>
             <div class="discount-section-label">{language.t('availablePromoCodes')}</div>
-            <div class="space-y-2">
+            <div class="grid grid-cols-2 gap-2">
               {#each codeDiscounts as d}
                 <button
                   class="discount-option-card {promoResult?.valid && appliedDiscountLabel === d.name ? 'discount-option-card--active' : ''}"
                   onclick={() => selectDiscountFromModal(d)}
                   disabled={cart.length === 0}
                 >
-                  <div class="flex items-start justify-between gap-3">
+                  <div class="flex flex-col items-start gap-1.5">
                     <div class="min-w-0">
                       <div class="discount-option-name">{d.name}</div>
                       <div class="discount-option-desc">{discountSummary(d)}{d.min_order_amount ? ` · Min. ${formatRupiah(d.min_order_amount)}` : ''}</div>
@@ -1471,10 +1445,10 @@
         {#if autoDiscounts.length > 0}
           <div>
             <div class="discount-section-label">{language.t('automatic')}</div>
-            <div class="space-y-2">
+            <div class="grid grid-cols-2 gap-2">
               {#each autoDiscounts as d}
                 <div class="discount-auto-card">
-                  <div class="flex items-start justify-between gap-3">
+                  <div class="flex flex-col items-start gap-1.5">
                     <div class="min-w-0">
                       <div class="discount-option-name">{d.name}</div>
                       <div class="discount-option-desc">{discountSummary(d)}{d.min_order_amount ? ` · Min. ${formatRupiah(d.min_order_amount)}` : ''}</div>
@@ -2274,29 +2248,12 @@
     padding: 0 4px;
   }
 
-  .promo-btn {
-    flex-shrink: 0;
-    padding: 0 14px;
-    height: 40px;
-    border-radius: 10px;
-    border: 1.5px solid var(--border);
-    background: var(--cream);
-    color: var(--espresso);
-    font-size: 0.8rem;
-    font-weight: 800;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .promo-btn:hover:not(:disabled) { background: var(--primary); border-color: var(--primary); color: white; }
-  .promo-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
   /* ─── Discount modal ─── */
   .discount-modal-shell {
     display: flex;
     flex-direction: column;
     width: 100%;
-    max-width: 480px;
+    max-width: 560px;
     max-height: 80vh;
     overflow: hidden;
     border-radius: 24px 24px 0 0;

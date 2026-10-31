@@ -62,7 +62,7 @@ Routes (thin) → Services (business logic) → Models (ORM)
 
 ## Multi-tenancy
 
-Every resource (Item, Category, Discount, Order) is scoped to a `Store` via FK. Store ID always in URL path (`/stores/{store_id}/...`). Users access stores via `StoreMembership`.
+Orders, discounts, packages, shifts, ingredients and finance records are scoped to a `Store` via FK. Items and categories are scoped to the store's `Business`; the stores of one business are its branches and share the catalog ([prd-branches.md](prd-branches.md)). Store ID always in URL path (`/stores/{store_id}/...`). Users access stores via `StoreMembership`.
 
 ## Money
 

@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.services.item_service import business_of, parent_store_id
 from app.models import Ingredient, Item, MovementType, OrderItem, RecipeLine, StockMovement
 from app.schemas.inventory import (
     IngredientCreate,
@@ -228,7 +229,7 @@ async def list_movements(
 
 async def get_recipe(item_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession) -> list[RecipeLine]:
     item = (
-        await db.execute(select(Item.id).where(Item.id == item_id, Item.store_id == store_id))
+        await db.execute(select(Item.id).where(Item.id == item_id, Item.business_id == business_of(store_id)))
     ).scalar_one_or_none()
     if not item:
         raise NotFoundError("Item not found")
@@ -240,6 +241,8 @@ async def set_recipe(
     item_id: uuid.UUID, store_id: uuid.UUID, lines: list[RecipeLineIn], db: AsyncSession
 ) -> list[RecipeLine]:
     await get_recipe(item_id, store_id, db)  # 404 check
+    if store_id != await parent_store_id(store_id, db):
+        raise BadRequestError("Recipe is managed by the parent store")
     ids = [l.ingredient_id for l in lines]
     if len(set(ids)) != len(ids):
         raise BadRequestError("Duplicate ingredient in recipe")
@@ -274,8 +277,24 @@ async def deduct_for_order(
         await db.execute(select(RecipeLine).where(RecipeLine.item_id.in_(qty_by_item)))
     ).unique().scalars().all()
     need: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
-    for r in recipe:
-        need[r.ingredient_id] += r.quantity * qty_by_item[r.item_id]
+    if store_id == await parent_store_id(store_id, db):
+        for r in recipe:
+            need[r.ingredient_id] += r.quantity * qty_by_item[r.item_id]
+    else:
+        # a branch uses the parent's recipe against its own ingredients, matched by name
+        by_name: dict[str, Decimal] = defaultdict(Decimal)
+        for r in recipe:
+            by_name[r.ingredient.name.lower()] += r.quantity * qty_by_item[r.item_id]
+        if by_name:
+            own = (
+                await db.execute(
+                    select(Ingredient).where(
+                        Ingredient.store_id == store_id, func.lower(Ingredient.name).in_(list(by_name))
+                    )
+                )
+            ).scalars().all()
+            for ing in own:
+                need[ing.id] += by_name[ing.name.lower()]
     if not need:
         return
     ings = (

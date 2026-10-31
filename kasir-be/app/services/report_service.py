@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Item, ItemCategory, Order, OrderItem, User
 from app.models.order import OrderStatus
+from app.services.item_service import business_of
 from app.schemas.report import (
     DashboardReport,
     DashboardSales,
@@ -96,14 +97,14 @@ async def dashboard_report(
             select(
                 func.count(Item.id).label("total"),
                 func.count(Item.id).filter(Item.is_available.is_(True)).label("available"),
-            ).where(Item.store_id == store_id)
+            ).where(Item.business_id == business_of(store_id))
         )
     ).one()
     total_items = item_counts_row.total or 0
     available_items = item_counts_row.available or 0
     total_categories = (
         await db.execute(
-            select(func.count(ItemCategory.id)).where(ItemCategory.store_id == store_id)
+            select(func.count(ItemCategory.id)).where(ItemCategory.business_id == business_of(store_id))
         )
     ).scalar_one()
 
@@ -151,7 +152,7 @@ async def dashboard_report(
         )
         .outerjoin(Item, Item.category_id == ItemCategory.id)
         .outerjoin(category_sales_subq, category_sales_subq.c.category_id == ItemCategory.id)
-        .where(ItemCategory.store_id == store_id)
+        .where(ItemCategory.business_id == business_of(store_id))
         .group_by(
             ItemCategory.id,
             ItemCategory.name,
@@ -171,7 +172,7 @@ async def dashboard_report(
             func.coalesce(item_sales_subq.c.total_revenue, 0).label("total_revenue"),
         )
         .outerjoin(item_sales_subq, item_sales_subq.c.item_id == Item.id)
-        .where(Item.store_id == store_id, Item.is_available.is_(True))
+        .where(Item.business_id == business_of(store_id), Item.is_available.is_(True))
         .order_by(Item.sort_order, Item.name)
         .limit(limit)
     )

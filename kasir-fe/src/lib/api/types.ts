@@ -44,6 +44,10 @@ export type Store = {
   pb1_bp?: number;
   shift_variance_threshold?: number;
   default_float?: number;
+  /** catalog owner: the parent store edits products, branches follow it */
+  is_parent?: boolean;
+  has_branches?: boolean;
+  parent_store_name?: string | null;
 };
 
 export type AdminStore = {
@@ -81,6 +85,7 @@ export type OptionGroup = {
   name?: string;
   label?: string;
   required?: boolean;
+  is_required?: boolean;
   choices?: OptionChoice[];
   option_choices?: OptionChoice[];
 };
@@ -89,6 +94,7 @@ export type OptionChoice = {
   id: string;
   name?: string;
   label?: string;
+  is_default?: boolean;
 };
 
 export type AddonGroup = {
@@ -109,6 +115,8 @@ export type AddonChoice = {
   price?: number;
 };
 
+export type BranchSetting = { store_id: string; store_name: string; is_sold: boolean; is_parent?: boolean; price: number | null };
+
 export type Item = {
   id: string;
   category_id?: string | null;
@@ -121,6 +129,8 @@ export type Item = {
   /** manual platform prices (staff only), e.g. { GOFOOD: 25000 } */
   channel_prices?: Partial<Record<OrderChannel, number>>;
   is_available?: boolean;
+  /** false when this branch does not sell the item */
+  is_sold?: boolean;
   image_url?: string | null;
   icon?: string | null;
   /** null = always available (no tracking). 0 = out of stock. >0 = tracked stock remaining. */

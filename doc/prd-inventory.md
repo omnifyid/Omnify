@@ -40,7 +40,7 @@ Low stock: `stock <= min_stock`.
 ## UI
 
 - `/inventory`: KPIs (ingredient count, low stock, stock value), tabs **Stok** (list, add/edit/delete modal, "Terima" restock modal), **Stock opname** (count inputs, per-row difference, value of differences, save), **Mutasi** (latest 100 movements).
-- Recipe editor: product edit modal → "Resep (bahan baku)" → `ProductsPanel.svelte` recipe modal with ingredient cost total. Existing lines come from `GET .../recipe` (name, unit, cost); new lines are added with `IngredientPicker` (search-as-you-type), so the ingredient list is never loaded in full.
+- Recipe editor: inline "Resep & bahan baku" column of the product editor in `ProductsPanel.svelte` (per-line quantity, unit cost, subtotal, total). Branches follow the parent store's recipe, see [prd-branches.md](prd-branches.md). Existing lines come from `GET .../recipe` (name, unit, cost); new lines are added with `IngredientPicker` (search-as-you-type), so the ingredient list is never loaded in full.
 
 ## Not implemented
 

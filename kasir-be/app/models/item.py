@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin
@@ -12,6 +12,9 @@ class Item(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     store_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
     )
     category_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("item_categories.id", ondelete="SET NULL"), nullable=True, index=True
@@ -26,6 +29,10 @@ class Item(Base, TimestampMixin):
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     stock: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
+    # per-store view, set by item_service.attach_store_view (not columns)
+    price = None
+    is_sold = True
+
     store: Mapped["Store"] = relationship(back_populates="items")
     category: Mapped["ItemCategory | None"] = relationship(back_populates="items")
     option_groups: Mapped[list["OptionGroup"]] = relationship(
@@ -37,3 +44,20 @@ class Item(Base, TimestampMixin):
     channel_prices: Mapped[list["ItemChannelPrice"]] = relationship(
         lazy="selectin", cascade="all, delete-orphan"
     )
+
+
+class ItemStoreSetting(Base, TimestampMixin):
+    """Per-branch override of a shared item: sold on/off and price (null = base price)."""
+
+    __tablename__ = "item_store_settings"
+    __table_args__ = (UniqueConstraint("item_id", "store_id", name="uq_item_store_setting"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("items.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    store_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    is_sold: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    price: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -26,7 +26,8 @@ describe('toAddonGroupsPayload', () => {
         name: 'Extras',
         min_select: 0,
         max_select: 2,
-        choices: [{ name: 'Extra Shot', extra_price: 5000 }]
+        sort_order: 0,
+        choices: [{ label: 'Extra Shot', extra_price: 5000, sort_order: 0 }]
       }
     ]);
   });
@@ -45,14 +46,15 @@ describe('toOptionGroupsPayload', () => {
         {
           name: 'Sugar Level',
           required: true,
-          choices: [{ name: 'Normal' }, { name: '  ' }]
+          choices: [{ name: 'Normal', is_default: true }, { name: '  ' }]
         }
       ])
     ).toEqual([
       {
         name: 'Sugar Level',
-        required: true,
-        choices: [{ name: 'Normal' }]
+        is_required: true,
+        sort_order: 0,
+        choices: [{ label: 'Normal', is_default: true, sort_order: 0 }]
       }
     ]);
   });

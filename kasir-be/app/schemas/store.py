@@ -11,6 +11,11 @@ class StoreCreate(BaseModel):
     description: str | None = None
 
 
+class BranchCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    slug: str | None = Field(default=None, min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
+
+
 class StoreUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
@@ -52,6 +57,10 @@ class StoreRead(BaseModel):
     shift_variance_threshold: int = 20000
     default_float: int = 0
     role: StoreRole | None = None
+    # catalog ownership: the parent store owns products; branches follow it
+    is_parent: bool = True
+    has_branches: bool = False
+    parent_store_name: str | None = None
 
     model_config = {"from_attributes": True}
 

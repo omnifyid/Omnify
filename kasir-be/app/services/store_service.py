@@ -1,3 +1,4 @@
+import re
 import secrets
 import uuid
 
@@ -6,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
-from app.models import Store, StoreMembership, StoreRole, User
+from app.models import Business, Store, StoreMembership, StoreRole, User
 
 
 async def create_store(
@@ -15,7 +16,10 @@ async def create_store(
     existing = await db.execute(select(Store).where(Store.slug == slug))
     if existing.scalar_one_or_none():
         raise ConflictError("Slug already taken")
-    store = Store(name=name, slug=slug, description=description)
+    business = Business(name=name)
+    db.add(business)
+    await db.flush()
+    store = Store(name=name, slug=slug, description=description, business_id=business.id)
     db.add(store)
     await db.flush()
     membership = StoreMembership(user_id=owner.id, store_id=store.id, role=StoreRole.OWNER)
@@ -23,6 +27,55 @@ async def create_store(
     await db.commit()
     await db.refresh(store)
     return store
+
+
+async def create_branch(source_store_id: uuid.UUID, name: str, slug: str | None, db: AsyncSession) -> Store:
+    """New store under the same business; the source store's owners become owners of it."""
+    source = await get_store(source_store_id, db)
+    if slug is None:
+        base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "branch"
+        slug = f"{base}-{secrets.token_hex(3)}"
+    if (await db.execute(select(Store.id).where(Store.slug == slug))).scalar_one_or_none():
+        raise ConflictError("Slug already taken")
+    store = Store(name=name, slug=slug, business_id=source.business_id)
+    db.add(store)
+    await db.flush()
+    owner_ids = (
+        await db.execute(
+            select(StoreMembership.user_id).where(
+                StoreMembership.store_id == source_store_id,
+                StoreMembership.role == StoreRole.OWNER,
+                StoreMembership.is_active.is_(True),
+            )
+        )
+    ).scalars()
+    for uid in owner_ids:
+        db.add(StoreMembership(user_id=uid, store_id=store.id, role=StoreRole.OWNER))
+    await db.commit()
+    await db.refresh(store)
+    return store
+
+
+async def attach_catalog_info(stores: list[Store], db: AsyncSession) -> None:
+    """Sets is_parent / has_branches / parent_store_name on each store."""
+    if not stores:
+        return
+    rows = (
+        await db.execute(
+            select(Store.id, Store.name, Store.business_id)
+            .where(Store.business_id.in_({s.business_id for s in stores}), Store.is_active.is_(True))
+            .order_by(Store.created_at, Store.id)
+        )
+    ).all()
+    groups: dict[uuid.UUID, list] = {}
+    for r in rows:
+        groups.setdefault(r.business_id, []).append(r)
+    for st in stores:
+        group = groups.get(st.business_id) or []
+        parent = group[0] if group else None
+        st.is_parent = parent is None or parent.id == st.id
+        st.has_branches = len(group) > 1
+        st.parent_store_name = parent.name if parent else None
 
 
 async def list_stores(user_id: uuid.UUID, db: AsyncSession) -> list[tuple[Store, StoreRole]]:
@@ -35,7 +88,9 @@ async def list_stores(user_id: uuid.UUID, db: AsyncSession) -> list[tuple[Store,
             Store.is_active.is_(True),
         )
     )
-    return list(result.all())
+    rows = list(result.all())
+    await attach_catalog_info([st for st, _ in rows], db)
+    return rows
 
 
 async def get_store(store_id: uuid.UUID, db: AsyncSession) -> Store:
@@ -45,6 +100,7 @@ async def get_store(store_id: uuid.UUID, db: AsyncSession) -> Store:
     store = result.scalar_one_or_none()
     if not store:
         raise NotFoundError("Store not found")
+    await attach_catalog_info([store], db)
     return store
 
 

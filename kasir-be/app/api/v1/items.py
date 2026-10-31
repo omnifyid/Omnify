@@ -6,12 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import cache
 from app.config import settings
-from app.core.dependencies import AnyMember, OwnerOrManager
+from app.core.dependencies import AnyMember, OwnerOrManager, get_current_user
 from app.core.exceptions import BadRequestError
 from app.database import get_db
-from app.models import StoreMembership
+from app.models import StoreMembership, User
 from app.schemas.common import PaginatedResponse
 from app.schemas.item import (
+    BranchSettingRead,
+    BranchSettingsUpdate,
     ChannelPricesUpdate,
     AddonGroupCreate,
     ItemCreate,
@@ -25,11 +27,6 @@ from app.services import item_service
 router = APIRouter()
 
 
-def _all_cache_keys(store_id: uuid.UUID) -> tuple[str, str, str]:
-    s = str(store_id)
-    return cache.menu_key(s), cache.items_key(s), cache.cats_key(s)
-
-
 @router.get("/{store_id}/items", response_model=PaginatedResponse[ItemRead])
 async def list_items(
     store_id: uuid.UUID,
@@ -37,6 +34,7 @@ async def list_items(
     available_only: bool = False,
     is_available: bool | None = None,
     stock_out: bool = False,
+    is_sold: bool | None = None,
     search: str | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -47,6 +45,7 @@ async def list_items(
         not search
         and is_available is None
         and not stock_out
+        and is_sold is None
         and not category_id
         and not available_only
         and offset == 0
@@ -62,7 +61,7 @@ async def list_items(
             }
 
     items, total = await item_service.list_items(
-        store_id, db, category_id, available_only, is_available, stock_out, search, limit, offset
+        store_id, db, category_id, available_only, is_available, stock_out, is_sold, search, limit, offset
     )
 
     if use_cache and limit >= 500:
@@ -86,7 +85,7 @@ async def create_item(
     db: AsyncSession = Depends(get_db),
 ):
     result = await item_service.create_item(store_id, payload, db)
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
     return result
 
 
@@ -109,7 +108,7 @@ async def update_item(
     db: AsyncSession = Depends(get_db),
 ):
     result = await item_service.update_item(item_id, store_id, payload, db)
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
     return result
 
 
@@ -121,7 +120,7 @@ async def delete_item(
     db: AsyncSession = Depends(get_db),
 ):
     await item_service.delete_item(item_id, store_id, db)
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
 
 
 @router.patch("/{store_id}/items/{item_id}/stock", response_model=ItemRead)
@@ -133,7 +132,7 @@ async def update_stock(
     db: AsyncSession = Depends(get_db),
 ):
     result = await item_service.update_stock(item_id, store_id, payload.stock, db)
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
     return result
 
 
@@ -146,7 +145,7 @@ async def replace_channel_prices(
     db: AsyncSession = Depends(get_db),
 ):
     result = await item_service.replace_channel_prices(item_id, store_id, payload.prices, db)
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
     return result
 
 
@@ -159,7 +158,7 @@ async def replace_option_groups(
     db: AsyncSession = Depends(get_db),
 ):
     result = await item_service.replace_option_groups(item_id, store_id, groups, db)
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
     return result
 
 
@@ -172,7 +171,7 @@ async def replace_addon_groups(
     db: AsyncSession = Depends(get_db),
 ):
     result = await item_service.replace_addon_groups(item_id, store_id, groups, db)
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
     return result
 
 
@@ -191,7 +190,7 @@ async def upload_item_image(
     dest.write_bytes(await file.read())
     image_url = f"/media/item_{item_id}.{ext}"
     result = await item_service.set_item_image(item_id, store_id, image_url, db)
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
     return result
 
 
@@ -203,5 +202,30 @@ async def remove_item_image(
     db: AsyncSession = Depends(get_db),
 ):
     result = await item_service.clear_item_image(item_id, store_id, db)
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
+    return result
+
+
+@router.get("/{store_id}/items/{item_id}/branches", response_model=list[BranchSettingRead])
+async def get_branch_settings(
+    store_id: uuid.UUID,
+    item_id: uuid.UUID,
+    _: StoreMembership = Depends(OwnerOrManager),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await item_service.list_branch_settings(item_id, store_id, user.id, db)
+
+
+@router.put("/{store_id}/items/{item_id}/branches", response_model=list[BranchSettingRead])
+async def put_branch_settings(
+    store_id: uuid.UUID,
+    item_id: uuid.UUID,
+    payload: BranchSettingsUpdate,
+    _: StoreMembership = Depends(OwnerOrManager),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await item_service.replace_branch_settings(item_id, store_id, user.id, payload.branches, db)
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
     return result

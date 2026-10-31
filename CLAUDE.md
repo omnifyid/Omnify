@@ -39,3 +39,9 @@ All project knowledge lives in `doc/`. When you add a feature, change the deploy
 
 ## Finance Feature
 @doc/prd-finance.md
+
+## Branches Feature
+@doc/prd-branches.md
+
+## Demo Data
+@doc/demo-data.md

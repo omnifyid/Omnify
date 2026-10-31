@@ -48,6 +48,9 @@ api.delete(`/stores/${storeId}/discounts/${id}`)
 
 | Method | Path | Guard | Notes |
 |--------|------|-------|-------|
+| POST | `/admin/seed/reset` | Super admin | Needs `DEMO_MODE=true`. Remove demo data and seed it again, see [demo-data.md](demo-data.md) |
+| DELETE | `/admin/seed` | Super admin | Remove demo data only |
+| GET | `/auth/demo-accounts` | Public | Demo accounts and password for the login screen; empty unless `DEMO_MODE=true` |
 | POST | `/auth/forgot-password` | Public | Sends reset email when account exists; always 204 unless email provider fails |
 | POST | `/auth/reset-password` | Public | Consumes reset token and updates password |
 | GET | `/stores/{id}/discounts` | OwnerOrManager | Paginated |
@@ -56,7 +59,9 @@ api.delete(`/stores/${storeId}/discounts/${id}`)
 | DELETE | `/stores/{id}/discounts/{did}` | OwnerOrManager | 204 no body |
 | POST | `/stores/{id}/discounts/validate` | AnyMember | Validate promo code |
 | GET | `/stores/{id}/categories` | AnyMember | Paginated |
-| GET | `/stores/{id}/items` | AnyMember | Paginated, filterable |
+| GET | `/stores/{id}/items` | AnyMember | Paginated, filterable; business catalog with this branch's `price`/`is_sold` |
+| PUT | `/stores/{id}/items/{iid}/branches` | OwnerOrManager | Per-branch sold/price, see [prd-branches.md](prd-branches.md) |
+| POST | `/stores/{id}/branches` | OwnerOnly | Create a branch in the same business |
 | GET | `/stores/{id}/orders` | AnyMember | Paginated; `status`, `payment_method`, `date_from`, `date_to`, `search`, `kind`, `state` |
 | POST | `/stores/{id}/orders/{oid}/refund` | OwnerOrManager | See [prd-orders.md](prd-orders.md) |
 | POST | `/stores/{id}/orders/{oid}/items/{iid}/void` | OwnerOrManager | See [prd-orders.md](prd-orders.md) |
@@ -75,6 +80,7 @@ api.delete(`/stores/${storeId}/discounts/${id}`)
 | `search` | str | Filter by item name (case-insensitive) |
 | `is_available` | bool \| null | Filter by availability (`true`, `false`, or omit for all) |
 | `stock_out` | bool | If `true`, returns only items with `stock <= 0` |
+| `is_sold` | bool \| null | `true` = sold at this branch (POS), `false` = switched off here, omit for all |
 
 ### Orders (`GET /stores/{id}/orders`)
 

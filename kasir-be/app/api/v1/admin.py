@@ -5,17 +5,19 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.dependencies import require_superadmin
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.core.security import hash_password
 from app.database import get_db
 from app.models import Store, StoreMembership, StoreRole, User
 from app.schemas.auth import UserRead
 from app.schemas.common import PaginatedResponse
-from app.services import auth_service, store_service
+from app.services import auth_service, seed_service, store_service
 
 router = APIRouter()
 user_router = APIRouter()
+seed_router = APIRouter()
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -214,7 +216,7 @@ async def get_stats(
         select(func.count(func.distinct(StoreMembership.user_id)))
         .where(StoreMembership.role == StoreRole.OWNER, StoreMembership.is_active.is_(True))
     )).scalar_one()
-    return {"store_count": store_count, "owner_count": owner_count}
+    return {"store_count": store_count, "owner_count": owner_count, "demo_mode": settings.demo_mode}
 
 
 # ── Store routes ──────────────────────────────────────────────────────────────
@@ -344,3 +346,30 @@ async def assign_store_owner(
 ):
     await store_service.add_member(store_id, payload.owner_email, StoreRole.OWNER, db, allow_owner=True)
     return await _fetch_admin_store(store_id, db)
+
+
+# ── Demo data ─────────────────────────────────────────────────────────────────
+
+def _require_demo_mode() -> None:
+    if not settings.demo_mode:
+        raise ForbiddenError("Demo data tools are disabled (set DEMO_MODE=true on this server)")
+
+
+@seed_router.post("/reset")
+async def reset_demo_data(
+    _: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove the demo stores and users, then seed them again."""
+    _require_demo_mode()
+    return await seed_service.reseed(db)
+
+
+@seed_router.delete("")
+async def clear_demo_data(
+    _: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove the demo stores and users without seeding again."""
+    _require_demo_mode()
+    return {"removed_stores": await seed_service.reset_demo(db)}

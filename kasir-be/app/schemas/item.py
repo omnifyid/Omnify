@@ -116,6 +116,8 @@ class PublicItemRead(BaseModel):
     name: str
     description: str | None
     base_price: int
+    price: int | None = None  # this branch's price (override or base)
+    is_sold: bool = True
     image_url: str | None
     icon: str | None
     is_available: bool
@@ -141,3 +143,18 @@ class ItemRead(PublicItemRead):
         if isinstance(v, list):
             return {r.channel: r.price for r in v}
         return v
+
+
+class BranchSettingIn(BaseModel):
+    store_id: uuid.UUID
+    is_sold: bool = True
+    price: int | None = Field(default=None, ge=0)
+
+
+class BranchSettingRead(BranchSettingIn):
+    store_name: str
+    is_parent: bool = False
+
+
+class BranchSettingsUpdate(BaseModel):
+    branches: list[BranchSettingIn]

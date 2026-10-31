@@ -11,13 +11,43 @@
   // ── Stats ─────────────────────────────────────────────────
   let statsStores = $state<number | null>(null);
   let statsOwners = $state<number | null>(null);
+  let demoMode = $state(false);
 
   async function loadStats() {
     try {
-      const res = await api.get<{ store_count: number; owner_count: number }>('/admin/stores/stats');
+      const res = await api.get<{ store_count: number; owner_count: number; demo_mode?: boolean }>('/admin/stores/stats');
       statsStores = res.store_count;
       statsOwners = res.owner_count;
+      demoMode = Boolean(res.demo_mode);
     } catch { /* non-critical */ }
+  }
+
+  // ── Demo data ─────────────────────────────────────────────
+  let demoAction = $state<'reset' | 'clear' | null>(null);
+  let demoRunning = $state(false);
+  let demoError = $state('');
+  let demoResult = $state('');
+
+  async function runDemoAction() {
+    if (!demoAction) return;
+    demoRunning = true;
+    demoError = '';
+    demoResult = '';
+    try {
+      if (demoAction === 'reset') {
+        const r = await api.post<Record<string, number>>('/admin/seed/reset', {});
+        demoResult = `Demo data ready: ${r.stores} stores, ${r.items} products, ${r.orders} orders, ${r.shifts} shifts, ${r.expenses} expenses, ${r.ingredients} ingredients.`;
+      } else {
+        const r = await api.delete<{ removed_stores: number }>('/admin/seed');
+        demoResult = `Removed ${r.removed_stores} demo store(s).`;
+      }
+      demoAction = null;
+      await Promise.all([load(), loadStats()]);
+    } catch (err) {
+      demoError = err instanceof Error ? err.message : 'Failed to run demo data action';
+    } finally {
+      demoRunning = false;
+    }
   }
 
   // ── Store list ────────────────────────────────────────────
@@ -323,6 +353,26 @@
     </div>
   </div>
 </div>
+
+{#if demoMode}
+<div class="card mb-6 flex flex-wrap items-center gap-4 p-5">
+  <div class="min-w-0 flex-1 basis-72">
+    <h2 class="text-[16px] font-bold">Demo data</h2>
+    <p class="text-sm text-[var(--text-muted)]">
+      One business with 3 stores set up differently (Kemang: all features, Senopati and BSD: variations), with 14 days of orders,
+      shifts, expenses, stock and platform payouts. Logins: <code>owner@demo.com</code>, <code>manager@demo.com</code>,
+      <code>operator@demo.com</code>, … password <code>demo1234</code>.
+    </p>
+  </div>
+  <div class="flex shrink-0 gap-2">
+    <button class="btn-outline" onclick={() => { demoAction = 'clear'; demoError = ''; }}>Remove demo data</button>
+    <button class="btn-primary" onclick={() => { demoAction = 'reset'; demoError = ''; }}>Reset &amp; seed</button>
+  </div>
+  {#if demoResult}
+    <div class="w-full rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-700" role="status">{demoResult}</div>
+  {/if}
+</div>
+{/if}
 
 {#if error}
   <div class="mb-5 rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">{error}</div>
@@ -713,3 +763,26 @@
   }
   .icon-btn:hover { background: var(--cream); }
 </style>
+
+{#if demoAction}
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-[var(--om-scrim)] p-4 backdrop-blur-sm">
+    <section class="w-full max-w-sm overflow-hidden rounded-3xl bg-[var(--white)] shadow-2xl" role="dialog" aria-modal="true">
+      <div class="px-6 pb-5 pt-7">
+        <h2 class="display-font text-xl font-bold text-[var(--espresso)]">{demoAction === 'reset' ? 'Reset & seed demo data?' : 'Remove demo data?'}</h2>
+        <p class="mt-2 text-sm text-[var(--text-muted)]">
+          This deletes the demo stores, their orders, shifts and stock, and the demo users
+          {demoAction === 'reset' ? ', then creates them again' : ''}. Other stores and users are not touched.
+        </p>
+        {#if demoError}
+          <div class="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{demoError}</div>
+        {/if}
+      </div>
+      <div class="flex gap-3 border-t border-[var(--border)] p-4">
+        <button class="btn-outline flex-1" disabled={demoRunning} onclick={() => (demoAction = null)}>Cancel</button>
+        <button class="btn-primary flex-1" disabled={demoRunning} onclick={runDemoAction}>
+          {demoRunning ? 'Working…' : demoAction === 'reset' ? 'Reset & seed' : 'Remove'}
+        </button>
+      </div>
+    </section>
+  </div>
+{/if}

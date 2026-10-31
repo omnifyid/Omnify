@@ -7,6 +7,7 @@
   import { paginatedItems } from '$lib/api/pagination';
   import type { Category, PaginatedResponse } from '$lib/api/types';
   import { language } from '$lib/i18n/language.svelte';
+  import CatalogNotice from './CatalogNotice.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { Trash2, X } from 'lucide-svelte';
 
@@ -80,7 +81,10 @@
     modalOpen = true;
   }
 
+  let locked = $derived(session.selectedStore?.is_parent === false);
+
   function openEdit(category: Category) {
+    if (locked) return;
     editName = category.name;
     editIcon = category.icon ?? '';
     modalEditing = category;
@@ -176,6 +180,7 @@
   }
 
   function keyMove(e: KeyboardEvent, category: Category) {
+    if (locked) return;
     const delta = e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : 0;
     if (!delta) return;
     e.preventDefault();
@@ -231,10 +236,14 @@
 <div class="mb-4 flex flex-wrap items-center gap-2.5">
   {@render tabs?.()}
   <div class="flex-1"></div>
+  {#if !locked}
   <button class="btn-primary flex items-center gap-1.5 !rounded-[10px]" onclick={openCreate}>
     <span class="ms !text-[20px] text-[var(--om-brand-on-dark)]">add</span>{language.t('add')}
   </button>
+  {/if}
 </div>
+
+<CatalogNotice />
 
 {#if error}
   <div role="alert" class="mb-4 flex items-center gap-2 rounded-[12px] bg-[var(--om-danger-tint)] p-3 text-[14px] font-semibold text-[var(--om-danger)]"><span class="ms">error</span>{error}</div>
@@ -260,7 +269,8 @@
 
       <div class="grid grid-cols-[1fr_1fr_36px] gap-1.5">
         <button
-          class="flex h-9 items-center justify-center gap-1.5 rounded-[9px] border border-[var(--om-border)] bg-white text-[14px] font-semibold text-[var(--om-ink)] transition-colors hover:border-[var(--om-brand)] hover:bg-[var(--om-brand-tint)]"
+          class="flex h-9 items-center justify-center gap-1.5 rounded-[9px] border border-[var(--om-border)] bg-white text-[14px] font-semibold text-[var(--om-ink)] transition-colors hover:border-[var(--om-brand)] hover:bg-[var(--om-brand-tint)] disabled:opacity-40 disabled:hover:border-[var(--om-border)] disabled:hover:bg-white"
+          disabled={locked}
           onclick={() => openEdit(category)}
           aria-label={`${language.t('editCategory')}: ${category.name}`}
         ><span class="ms !text-[18px]">edit</span>{language.t('editShort')}</button>
@@ -274,7 +284,7 @@
           data-handle
           class="grid h-9 w-9 touch-none place-items-center rounded-[9px] text-[var(--om-text-secondary)] hover:bg-[var(--om-fill-hover)] {dragId === category.id ? 'cursor-grabbing' : 'cursor-grab'}"
           aria-label={`${language.t('reorder')}: ${category.name}`}
-          disabled={reordering}
+          disabled={reordering || locked}
           onpointerdown={(e) => startDrag(e, category)}
           onpointermove={moveDrag}
           onpointerup={endDrag}

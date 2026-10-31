@@ -189,3 +189,10 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .status-pending { background: var(--om-warning-tint); color: var(--om-warning); }
 .status-cancelled { background: var(--om-danger-tint); color: var(--om-danger); }
 }
+
+/* motion from new-ui: blinking logo cursor, entrance for popovers and drawers */
+@keyframes omBlink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes omUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

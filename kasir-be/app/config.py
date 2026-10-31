@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     resend_api_key: str | None = None
     resend_from_email: str = "Kasir <no-reply@example.com>"
     redis_url: str | None = None
+    # enables the super admin demo-data reset (creates accounts with a known password); keep off in production
+    demo_mode: bool = False
 
     @property
     def cors_origins(self) -> list[str]:

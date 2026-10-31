@@ -14,11 +14,6 @@ from app.services import item_service
 router = APIRouter()
 
 
-def _all_cache_keys(store_id: uuid.UUID) -> tuple[str, str, str]:
-    s = str(store_id)
-    return cache.menu_key(s), cache.items_key(s), cache.cats_key(s)
-
-
 @router.get("/{store_id}/categories", response_model=PaginatedResponse[CategoryRead])
 async def list_categories(
     store_id: uuid.UUID,
@@ -65,7 +60,7 @@ async def create_category(
     result = await item_service.create_category(
         store_id, payload.name, payload.sort_order, db, payload.icon
     )
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
     return result
 
 
@@ -80,7 +75,7 @@ async def update_category(
     result = await item_service.update_category(
         cat_id, store_id, payload.model_dump(exclude_unset=True), db
     )
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))
     return result
 
 
@@ -92,4 +87,4 @@ async def delete_category(
     db: AsyncSession = Depends(get_db),
 ):
     await item_service.delete_category(cat_id, store_id, db)
-    await cache.delete(*_all_cache_keys(store_id))
+    await cache.delete(*await item_service.business_cache_keys(store_id, db))

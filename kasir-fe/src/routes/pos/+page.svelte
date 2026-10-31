@@ -205,7 +205,7 @@
     try {
       const [catsRes, itemsRes, discountsRes] = await Promise.all([
         api.get<PaginatedResponse<Category>>(`/stores/${storeId}/categories?limit=100`),
-        api.get<PaginatedResponse<Item>>(`/stores/${storeId}/items?limit=1000`),
+        api.get<PaginatedResponse<Item>>(`/stores/${storeId}/items?limit=1000&is_sold=true`),
         api.get<PaginatedResponse<Discount>>(`/stores/${storeId}/discounts?limit=100`)
       ]);
       categories = paginatedItems(catsRes);

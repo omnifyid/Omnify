@@ -36,7 +36,7 @@
       </div>
       <div class="min-w-0 flex-1">
         <div class="truncate text-[12px] font-semibold">{current?.name ?? language.t('noStoreSelected')}</div>
-        <div class="truncate text-[12px] text-[var(--om-text-secondary)]">{current?.role ?? ''}</div>
+        <div class="truncate text-[12px] text-[var(--om-text-secondary)]">{current?.role ?? ''}{#if current?.has_branches} · {current.is_parent ? language.t('parentStore') : language.t('storeBranch')}{/if}</div>
       </div>
       {#if canSwitch}<span class="ms !text-[20px] text-[var(--om-text-secondary)]">unfold_more</span>{/if}
     </button>
@@ -76,8 +76,8 @@
         >
           <span class="ms !text-[20px] text-[var(--om-brand)]">storefront</span>
           <span class="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span class="truncate text-[16px] font-semibold">{store.name}</span>
-            <span class="truncate text-[12px] text-[var(--om-text-secondary)]">{store.description || store.role}</span>
+            <span class="flex items-center gap-2"><span class="truncate text-[16px] font-semibold">{store.name}</span>{#if store.has_branches}<span class="shrink-0 rounded-full px-2 py-0.5 text-[12px] font-semibold {store.is_parent ? 'bg-[var(--om-brand-tint)] text-[var(--om-brand)]' : 'bg-[var(--om-fill-muted)] text-[var(--om-text-secondary)]'}">{store.is_parent ? language.t('parentStore') : language.t('storeBranch')}</span>{/if}</span>
+            <span class="truncate text-[12px] text-[var(--om-text-secondary)]">{store.description || store.role}{#if store.has_branches} · {store.is_parent ? language.t('parentStore') : language.t('storeBranch')}{/if}</span>
           </span>
           {#if active}<span class="ms !text-[20px] text-[var(--om-brand)]">check</span>{/if}
         </button>

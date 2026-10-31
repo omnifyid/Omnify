@@ -13,7 +13,7 @@
   type MenuAddonGroup   = { id: string; name: string; is_required: boolean; min_select: number; max_select: number | null; choices: MenuAddonChoice[]; };
   type MenuItem = {
     id: string; name: string; description: string | null;
-    base_price: number; image_url: string | null; icon: string | null;
+    base_price: number; price?: number; image_url: string | null; icon: string | null;
     stock: number | null; category_id: string | null;
     option_groups: MenuOptionGroup[]; addon_groups: MenuAddonGroup[];
   };

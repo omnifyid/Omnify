@@ -70,8 +70,4 @@ Pre-built guards in `core/dependencies.py`: `OwnerOnly`, `OwnerOrManager`, `AnyM
 
 ## Demo Data
 
-`seed.py` creates store "Kopi Senja" with 5 categories, 28 items, 52 option groups, 42 addon groups, and three users. Idempotent — skips existing records. `--reset` deletes and re-creates all demo data.
-
-- `owner@demo.com` / `demo1234`
-- `manager@demo.com` / `demo1234`
-- `operator@demo.com` / `demo1234`
+`seed.py` (logic in `app/services/seed_service.py`) creates the business "Kopi Senja" with three stores set up differently, a menu of 28 products, and 14 days of orders, shifts, expenses, stock and platform payouts. Running it again resets the demo data first. The super admin page has the same reset. See [../doc/demo-data.md](../doc/demo-data.md) for the stores, features and accounts (`owner@demo.com`, `manager@demo.com`, `operator@demo.com`, … / `demo1234`)  The super admin reset needs `DEMO_MODE=true`; the seed never creates a super admin..

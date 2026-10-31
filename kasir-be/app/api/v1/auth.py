@@ -1,10 +1,13 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
 
 from app.core.dependencies import get_current_user
 from app.database import get_db
 from app.main import limiter
-from app.models import User
+from app.models import ROLE_RANK, Store, StoreMembership, User
 from app.schemas.auth import (
     ForgotPasswordIn,
     LoginIn,
@@ -14,10 +17,45 @@ from app.schemas.auth import (
     TokenResponse,
     UserRead,
 )
-from app.services import auth_service
+from app.services import auth_service, seed_service
 from app.services.email_service import EmailSendError
 
 router = APIRouter()
+
+
+@router.get("/demo-accounts")
+async def demo_accounts(db: AsyncSession = Depends(get_db)):
+    """Login-screen shortcuts. Empty unless DEMO_MODE=true; never lists super admins."""
+    if not settings.demo_mode:
+        return {"demo_mode": False, "password": None, "accounts": []}
+    rows = (
+        await db.execute(
+            select(User.email, User.full_name, StoreMembership.role, Store.name)
+            .join(StoreMembership, StoreMembership.user_id == User.id)
+            .join(Store, Store.id == StoreMembership.store_id)
+            .where(
+                User.email.in_(seed_service.DEMO_EMAILS),
+                User.is_superadmin.is_(False),
+                User.is_active.is_(True),
+                StoreMembership.is_active.is_(True),
+                Store.is_active.is_(True),
+            )
+            .order_by(Store.created_at, Store.name)
+        )
+    ).all()
+    accounts: dict[str, dict] = {}
+    for email, name, role, store_name in rows:
+        a = accounts.setdefault(email, {"email": email, "full_name": name, "role": role, "stores": []})
+        if ROLE_RANK[role] > ROLE_RANK[a["role"]]:
+            a["role"] = role
+        a["stores"].append(store_name)
+    order = {e: i for i, e in enumerate(seed_service.DEMO_EMAILS)}
+    ordered = sorted(accounts.values(), key=lambda a: order[a["email"]])
+    return {
+        "demo_mode": True,
+        "password": seed_service.DEMO_PASSWORD,
+        "accounts": [{**a, "role": a["role"].value} for a in ordered],
+    }
 
 
 @router.post("/register", response_model=UserRead, status_code=201)

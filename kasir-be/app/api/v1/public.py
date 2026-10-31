@@ -67,7 +67,7 @@ async def get_public_menu(
     store = await _get_active_store(store_id, db)
     categories, _ = await item_service.list_categories(store_id, db, limit=200)
     items, _ = await item_service.list_items(
-        store_id, db, available_only=True, limit=500
+        store_id, db, available_only=True, is_sold=True, limit=500
     )
     response = PublicMenuResponse(
         store=StorePublicInfo.model_validate(store),

@@ -4,10 +4,11 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, BadRequestError
 from app.models import Discount, Item, ItemCategory
 from app.models.discount import DiscountScope, DiscountTarget, DiscountType
 from app.schemas.discount import DiscountCreate, DiscountUpdate
+from app.services.item_service import business_of
 
 
 async def list_discounts(
@@ -18,20 +19,22 @@ async def list_discounts(
     total = total_result.scalar_one()
     result = await db.execute(base.offset(offset).limit(limit))
     discounts = list(result.scalars().all())
-    await _attach_target_names(discounts, db)
+    await _attach_target_names(discounts, store_id, db)
     return discounts, total
 
 
-async def _attach_target_names(discounts: list[Discount], db: AsyncSession) -> None:
+async def _attach_target_names(discounts: list[Discount], store_id: uuid.UUID, db: AsyncSession) -> None:
     item_ids = {d.target_item_id for d in discounts if d.target_item_id}
     cat_ids = {d.target_category_id for d in discounts if d.target_category_id}
     item_names = (
-        dict((await db.execute(select(Item.id, Item.name).where(Item.id.in_(item_ids)))).all())
+        dict((await db.execute(select(Item.id, Item.name).where(Item.id.in_(item_ids), Item.business_id == business_of(store_id)))).all())
         if item_ids
         else {}
     )
     cat_names = (
-        dict((await db.execute(select(ItemCategory.id, ItemCategory.name).where(ItemCategory.id.in_(cat_ids)))).all())
+        dict((await db.execute(select(ItemCategory.id, ItemCategory.name).where(
+                        ItemCategory.id.in_(cat_ids), ItemCategory.business_id == business_of(store_id)
+                    ))).all())
         if cat_ids
         else {}
     )
@@ -40,9 +43,26 @@ async def _attach_target_names(discounts: list[Discount], db: AsyncSession) -> N
         d.target_category_name = cat_names.get(d.target_category_id)
 
 
+async def _check_targets(
+    store_id: uuid.UUID, item_id: uuid.UUID | None, category_id: uuid.UUID | None, db: AsyncSession
+) -> None:
+    """A discount may only target products and categories of its own store."""
+    if item_id and not (
+        await db.execute(select(Item.id).where(Item.id == item_id, Item.business_id == business_of(store_id)))
+    ).scalar_one_or_none():
+        raise BadRequestError("Target item not found in this store")
+    if category_id and not (
+        await db.execute(
+            select(ItemCategory.id).where(ItemCategory.id == category_id, ItemCategory.business_id == business_of(store_id))
+        )
+    ).scalar_one_or_none():
+        raise BadRequestError("Target category not found in this store")
+
+
 async def create_discount(
     store_id: uuid.UUID, payload: DiscountCreate, db: AsyncSession
 ) -> Discount:
+    await _check_targets(store_id, payload.target_item_id, payload.target_category_id, db)
     discount = Discount(
         store_id=store_id,
         name=payload.name,
@@ -70,7 +90,9 @@ async def update_discount(
     discount_id: uuid.UUID, store_id: uuid.UUID, payload: DiscountUpdate, db: AsyncSession
 ) -> Discount:
     discount = await _get(discount_id, store_id, db)
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    await _check_targets(store_id, changes.get("target_item_id"), changes.get("target_category_id"), db)
+    for k, v in changes.items():
         setattr(discount, k, v)
     await db.commit()
     await db.refresh(discount)

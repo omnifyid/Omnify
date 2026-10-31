@@ -18,6 +18,9 @@ class ItemCategory(Base, TimestampMixin):
     store_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     icon: Mapped[str | None] = mapped_column(String(16), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

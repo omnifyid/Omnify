@@ -32,6 +32,27 @@
   let shiftThreshold = $state('');
   let defaultFloat = $state('');
   let isOwner = $derived(session.selectedStore?.role === 'OWNER');
+  let branchName = $state('');
+  let addingBranch = $state(false);
+  let branchError = $state('');
+
+  async function addBranch() {
+    const storeId = session.selectedStore?.id;
+    const name = branchName.trim();
+    if (!storeId || !name) return;
+    addingBranch = true;
+    branchError = '';
+    try {
+      const created = await api.post<{ id: string }>(`/stores/${storeId}/branches`, { name });
+      await session.loadStores();
+      session.selectedStoreId = created.id;
+      branchName = '';
+    } catch (e) {
+      branchError = e instanceof Error ? e.message : String(e);
+    } finally {
+      addingBranch = false;
+    }
+  }
   const pctText = (bp: number) => (bp ? String(bp / 100) : '');
   const toBp = (v: string) => Math.max(0, Math.round((parseFloat(v.replace(',', '.')) || 0) * 100));
 
@@ -450,6 +471,26 @@
             <input class="field" type="text" inputmode="numeric" placeholder="0" value={defaultFloat} oninput={(e) => { defaultFloat = formatDigits(e.currentTarget.value); e.currentTarget.value = defaultFloat; }} />
           </label>
           <p class="text-xs text-[var(--text-muted)] sm:col-span-2">{language.t('settingsShiftHint')}</p>
+        </div>
+      </div>
+    {/if}
+
+    <!-- ── Branches (Owner) ────────────────────────────────── -->
+    {#if isOwner}
+      <div class="mb-8">
+        <p class="section-label">{language.t('branches')}</p>
+        <div class="card space-y-3 p-5">
+          <p class="text-xs text-[var(--text-muted)]">{language.t('branchesDesc')}</p>
+          <ul class="divide-y divide-[var(--border)]">
+            {#each session.stores as st (st.id)}
+              <li class="flex items-center gap-2 py-2 text-sm font-semibold"><span class="ms !text-[20px] text-[var(--om-brand)]">storefront</span>{st.name}</li>
+            {/each}
+          </ul>
+          {#if branchError}<div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{branchError}</div>{/if}
+          <div class="flex gap-2">
+            <input class="field min-w-0 flex-1" placeholder={language.t('branchName')} bind:value={branchName} onkeydown={(e) => { if (e.key === 'Enter') addBranch(); }} />
+            <button type="button" class="btn-primary shrink-0" disabled={addingBranch || !branchName.trim()} onclick={addBranch}>{language.t('addBranch')}</button>
+          </div>
         </div>
       </div>
     {/if}

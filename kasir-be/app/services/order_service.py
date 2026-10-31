@@ -26,7 +26,7 @@ from app.schemas.order import (
     RefundCreate,
     VoidCreate,
 )
-from app.services import channel_service, discount_service, inventory_service
+from app.services import channel_service, discount_service, inventory_service, item_service
 
 
 def direct_order_fees(net: int, dine_in: bool, service_bp: int, pb1_bp: int) -> tuple[int, int]:
@@ -426,7 +426,8 @@ async def _process_item_line(
         select(Item)
         .where(
             Item.id == cart_item.item_id,
-            Item.store_id == store_id,
+            Item.business_id == item_service.business_of(store_id),
+            item_service.not_hidden_in(store_id),
             Item.is_available.is_(True),
         )
         .with_for_update()
@@ -463,7 +464,7 @@ async def _process_item_line(
 
     # a manual platform price replaces the base price; markup then only applies to add-ons
     manual = next((p.price for p in item.channel_prices if p.channel == channel), None) if channel else None
-    unit_price = manual or channel_service.ceil_markup(item.base_price, markup_bp)
+    unit_price = manual or channel_service.ceil_markup(await item_service.effective_price(item, store_id, db), markup_bp)
     line_total = (unit_price + addon_total) * cart_item.quantity
 
     return {
@@ -699,7 +700,8 @@ async def _preview_item_line(
     result = await db.execute(
         select(Item).where(
             Item.id == cart_item.item_id,
-            Item.store_id == store_id,
+            Item.business_id == item_service.business_of(store_id),
+            item_service.not_hidden_in(store_id),
             Item.is_available.is_(True),
         )
     )
@@ -717,7 +719,7 @@ async def _preview_item_line(
     return {
         "item_id": item.id,
         "category_id": item.category_id,
-        "line_total": (item.base_price + addon_total) * cart_item.quantity,
+        "line_total": (await item_service.effective_price(item, store_id, db) + addon_total) * cart_item.quantity,
         "item_discount_amount": 0,
     }
 

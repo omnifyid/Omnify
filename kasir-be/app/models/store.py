@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin
@@ -10,6 +10,9 @@ class Store(Base, TimestampMixin):
     __tablename__ = "stores"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("businesses.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -31,6 +34,12 @@ class Store(Base, TimestampMixin):
     receipt_header: Mapped[str | None] = mapped_column(Text, nullable=True)
     receipt_footer: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # catalog role, set by store_service.attach_catalog_info (not columns)
+    is_parent = True
+    has_branches = False
+    parent_store_name = None
+
+    business: Mapped["Business"] = relationship(back_populates="stores")
     memberships: Mapped[list["StoreMembership"]] = relationship(back_populates="store")
     categories: Mapped[list["ItemCategory"]] = relationship(back_populates="store")
     items: Mapped[list["Item"]] = relationship(back_populates="store")

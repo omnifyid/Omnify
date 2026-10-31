@@ -17,6 +17,7 @@ from app.models.membership import ROLE_RANK
 from app.schemas.common import PaginatedResponse
 from app.schemas.store import (
     AddMemberIn,
+    BranchCreate,
     MemberRead,
     StoreCreate,
     StoreRead,
@@ -107,6 +108,18 @@ async def upload_store_logo(
     s = str(store_id)
     await cache.delete(cache.menu_key(s), cache.items_key(s), cache.cats_key(s))
     return result
+
+
+@router.post("/{store_id}/branches", response_model=StoreRead, status_code=201)
+async def create_branch(
+    store_id: uuid.UUID,
+    payload: BranchCreate,
+    _: StoreMembership = Depends(OwnerOnly),
+    db: AsyncSession = Depends(get_db),
+):
+    store = await store_service.create_branch(store_id, payload.name, payload.slug, db)
+    await store_service.attach_catalog_info([store], db)
+    return StoreRead.model_validate({**store.__dict__, "role": StoreRole.OWNER})
 
 
 @router.delete("/{store_id}", status_code=204)

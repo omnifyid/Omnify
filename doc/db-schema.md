@@ -17,12 +17,14 @@ stores
 
 | Table | Notes |
 |-------|-------|
-| `stores` | Root tenant entity |
+| `businesses` | Owns the shared catalog (items, categories); `stores.business_id`. See [prd-branches.md](prd-branches.md) |
+| `stores` | Tenant/branch; belongs to one business |
+| `item_store_settings` | Per branch `is_sold` and price override of an item, see [prd-branches.md](prd-branches.md) |
 | `store_memberships` | `user_id + store_id + role (OWNER/MANAGER/OPERATOR)` |
 | `users` | `email`, bcrypt `password_hash`, `refresh_token_hash` |
 | `password_reset_tokens` | Hashed single-use password reset tokens, expiry, consumed timestamp |
-| `item_categories` | `name`, `icon` (emoji), `store_id` |
-| `items` | `name`, `price` (int, Rupiah), `cost_price` (HPP, nullable int, Rupiah; staff-only, omitted from the public menu), `is_available`, `stock`, `store_id`, `category_id` |
+| `item_categories` | `name`, `icon` (emoji), `business_id` |
+| `items` | `name`, `price` (int, Rupiah), `cost_price` (HPP, nullable int, Rupiah; staff-only, omitted from the public menu), `is_available`, `stock`, `business_id`, `category_id` |
 | `discounts` | See [prd-discounts.md](prd-discounts.md) |
 | `orders` | `status`, `payment_method` (`CASH`/`CARD`/`QRIS`/`TRANSFER`/`PLATFORM`), `channel` (nullable), `subtotal`, `discount_amount`, `total`, `kitchen_status` (nullable), `store_id` |
 | `stores.kitchen_enabled` | Opt-in kitchen management, see [prd-kitchen.md](prd-kitchen.md) |

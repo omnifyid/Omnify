@@ -22,20 +22,23 @@ export type OptionGroupPayloadInput = {
   required?: boolean;
   choices: Array<{
     name: string;
+    is_default?: boolean;
   }>;
 };
 
 export function toAddonGroupsPayload(groups: AddonGroupPayloadInput[]) {
   return groups
-    .map((group) => ({
+    .map((group, groupIndex) => ({
       name: group.name.trim(),
       min_select: group.min_select ?? 0,
       max_select: group.max_select ?? null,
+      sort_order: groupIndex,
       choices: group.choices
         .filter((choice) => choice.name.trim())
-        .map((choice) => ({
-          name: choice.name.trim(),
-          extra_price: Math.max(0, Math.round(choice.extra_price || 0))
+        .map((choice, choiceIndex) => ({
+          label: choice.name.trim(),
+          extra_price: Math.max(0, Math.round(choice.extra_price || 0)),
+          sort_order: choiceIndex
         }))
     }))
     .filter((group) => group.name && group.choices.length > 0);
@@ -52,12 +55,13 @@ export function toItemUpdatePayload(input: { name?: string; categoryId?: string;
 
 export function toOptionGroupsPayload(groups: OptionGroupPayloadInput[]) {
   return groups
-    .map((group) => ({
+    .map((group, groupIndex) => ({
       name: group.name.trim(),
-      required: Boolean(group.required),
+      is_required: Boolean(group.required),
+      sort_order: groupIndex,
       choices: group.choices
         .filter((choice) => choice.name.trim())
-        .map((choice) => ({ name: choice.name.trim() }))
+        .map((choice, choiceIndex) => ({ label: choice.name.trim(), is_default: Boolean(choice.is_default), sort_order: choiceIndex }))
     }))
     .filter((group) => group.name && group.choices.length > 0);
 }

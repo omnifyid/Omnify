@@ -29,6 +29,9 @@ stores
 | `orders` | `status`, `payment_method` (`CASH`/`CARD`/`QRIS`/`TRANSFER`/`PLATFORM`), `channel` (nullable), `cash_received` (nullable, cash orders), `subtotal`, `discount_amount`, `total`, `kitchen_status` (nullable), `store_id` |
 | `stores.kitchen_enabled` | Opt-in kitchen management, see [prd-kitchen.md](prd-kitchen.md) |
 | `stores.address`, `stores.phone`, `stores.receipt_options` | Shown on receipts, see [prd-settings.md](prd-settings.md) |
+| `stores.payment_options`, `orders.payment_provider` | Enabled payment methods with EDC banks / QRIS providers; the provider chosen on an order, see [prd-settings.md](prd-settings.md) |
+| `stores.expense_categories` | JSON list of expense categories; null = defaults, see [prd-finance.md](prd-finance.md) |
+| `stores.is_open` | Temporary open/closed switch; closed rejects new orders, see [prd-settings.md](prd-settings.md) |
 | `stores.inventory_enabled`, `stores.finance_enabled` | Module switches (default true), see [prd-settings.md](prd-settings.md) |
 | `stores.service_bp`, `stores.pb1_bp`, `orders.service_amount`, `orders.pb1_amount` | Dine-in service charge and PB1 on direct orders, see [prd-orders.md](prd-orders.md) |
 | `ingredients`, `recipe_lines`, `stock_movements` | Ingredient stock, product recipes, stock log, see [prd-inventory.md](prd-inventory.md) |

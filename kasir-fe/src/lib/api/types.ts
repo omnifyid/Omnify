@@ -31,12 +31,15 @@ export type Store = {
   logo_url?: string | null;
   self_order_enabled?: boolean;
   selforder_is_open?: boolean;
+  is_open?: boolean;
   show_logo?: boolean;
   receipt_header?: string | null;
   receipt_footer?: string | null;
   address?: string | null;
   phone?: string | null;
   receipt_options?: Partial<import('$lib/utils/receipt').ReceiptOptions> | null;
+  expense_categories?: string[];
+  payment_options?: Partial<import('$lib/utils/payment').PaymentOptions> | null;
   pos_dine_in_enabled?: boolean;
   pos_table_enabled?: boolean;
   pos_table_count?: number;
@@ -150,6 +153,7 @@ export type Order = {
   operator_id?: string | null;
   status: OrderStatus;
   payment_method: PaymentMethod;
+  payment_provider?: string | null;
   subtotal?: number;
   discount_amount?: number;
   total_amount: number;

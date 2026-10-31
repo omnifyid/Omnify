@@ -10,6 +10,7 @@
   import { buildKitchenTicketBytes, buildReceiptBytes } from '$lib/utils/escpos';
   import ReceiptView from '$lib/components/ReceiptView.svelte';
   import { customerReceipt, kitchenTicket, receiptOptions } from '$lib/utils/receipt';
+  import { paymentText } from '$lib/utils/payment';
 
   let order = $state<Order | null>(null);
   let error = $state('');
@@ -174,7 +175,7 @@
           </div>
           <div class="shrink-0 text-right">
             <div class="font-bold text-[var(--warm-brown)]">{formatRupiah(order.total_amount)}</div>
-            <span class="mt-1 inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold {paymentBadgeClass(order.payment_method)}">{order.payment_method}</span>
+            <span class="mt-1 inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold {paymentBadgeClass(order.payment_method)}">{paymentText(order)}</span>
           </div>
         </div>
 

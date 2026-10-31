@@ -8,16 +8,15 @@
   import { formatRupiah } from '$lib/utils/format';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { SEG_GROUP, seg } from '$lib/utils/ui';
+  import { SEG_GROUP, seg, chip } from '$lib/utils/ui';
+  import { DEFAULT_EXPENSE_CATEGORIES, expenseCategories } from '$lib/utils/finance';
+  import { BANK_PRESETS, QRIS_WALLET_PRESETS, paymentOptions, type MethodVariants, type PaymentOptions } from '$lib/utils/payment';
   import ReceiptView from '$lib/components/ReceiptView.svelte';
   import { customerReceipt, kitchenTicket, paperChars, RECEIPT_DEFAULTS, receiptOptions, sampleOrder, type ReceiptOptions } from '$lib/utils/receipt';
   import type { MessageKey } from '$lib/i18n/messages';
 
   // ── Form state ────────────────────────────────────────────
   let storeName = $state('');
-  let showLogo = $state(true);
-  let receiptHeader = $state('');
-  let receiptFooter = $state('');
   let address = $state('');
   let phone = $state('');
   // what the customer receipt and kitchen ticket print; saved with the Nota tab
@@ -40,12 +39,32 @@
   let taxPct = $state('');
   let servicePct = $state('');
   let pb1Pct = $state('');
+  let expCats = $state<string[]>([]);
+  let newCat = $state('');
+  let pay = $state<PaymentOptions>(paymentOptions(null));
+  let payCustom = $state({ edc: '', qris: '' });
+  let feeOn = $state({ service: false, pb1: false });
   let shiftThreshold = $state('');
   let defaultFloat = $state('');
   let isOwner = $derived(session.selectedStore?.role === 'OWNER');
   let branchName = $state('');
   let addingBranch = $state(false);
   let branchError = $state('');
+  let branchOpen = $state(false);
+  let openBusy = $state<string | null>(null);
+  let editingId = $state<string | null>(null); // expanded outlet card
+
+  async function setOutletOpen(id: string, open: boolean) {
+    openBusy = id;
+    try {
+      await api.patch(`/stores/${id}`, { is_open: open });
+      await session.loadStores();
+    } catch (e) {
+      saveError = e instanceof Error ? e.message : String(e);
+    } finally {
+      openBusy = null;
+    }
+  }
 
   async function addBranch() {
     const storeId = session.selectedStore?.id;
@@ -58,6 +77,7 @@
       await session.loadStores();
       session.selectedStoreId = created.id;
       branchName = '';
+      branchOpen = false;
     } catch (e) {
       branchError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -78,12 +98,13 @@
 
 
   // ── Tabs (like new-ui) ────────────────────────────────────
-  type Tab = 'modules' | 'store' | 'receipt' | 'pos' | 'channels' | 'policy';
+  type Tab = 'modules' | 'store' | 'receipt' | 'pos' | 'payment' | 'channels' | 'policy';
   let tabs = $derived<[Tab, MessageKey][]>([
     ['modules', 'settingsTabModules'],
     ['store', 'settingsTabStore'],
     ['receipt', 'settingsTabReceipt'],
     ['pos', 'settingsTabPos'],
+    ['payment', 'settingsTabPay'],
     ...(isOwner && channelForms.length ? ([['channels', 'settingsTabChannels']] as [Tab, MessageKey][]) : []),
     ...(isOwner ? ([['policy', 'settingsTabPolicy']] as [Tab, MessageKey][]) : [])
   ]);
@@ -144,29 +165,16 @@
   let saveError = $state('');
   let saveSuccess = $state('');
 
-  // ── Char-count helpers ────────────────────────────────────
-  let THERMAL_WIDTH = $derived(paperChars(rc));
-
-  function lineWidths(text: string): number[] {
-    return text.split('\n').map((l) => l.length);
-  }
-
-  let headerLines = $derived(lineWidths(receiptHeader));
-  let footerLines = $derived(lineWidths(receiptFooter));
-  let headerOverflow = $derived(headerLines.some((w) => w > THERMAL_WIDTH));
-  let footerOverflow = $derived(footerLines.some((w) => w > THERMAL_WIDTH));
-
   // ── Load ──────────────────────────────────────────────────
   function initFromStore() {
     const s = session.selectedStore;
     if (!s) return;
     storeName = s.name;
-    showLogo = s.show_logo !== false;
-    receiptHeader = s.receipt_header ?? '';
-    receiptFooter = s.receipt_footer ?? '';
     address = s.address ?? '';
     phone = s.phone ?? '';
     rc = receiptOptions(s);
+    pay = paymentOptions(s);
+    expCats = [...expenseCategories(s)];
     logoUrl = s.logo_url ?? null;
     logoPreviewUrl = null;
     posDineIn = s.pos_dine_in_enabled ?? false;
@@ -180,6 +188,7 @@
     taxPct = pctText(s.tax_bp ?? 0);
     servicePct = pctText(s.service_bp ?? 0);
     pb1Pct = pctText(s.pb1_bp ?? 0);
+    feeOn = { service: (s.service_bp ?? 0) > 0, pb1: (s.pb1_bp ?? 0) > 0 };
     shiftThreshold = formatDigits(String(s.shift_variance_threshold ?? 20000));
     defaultFloat = formatDigits(String(s.default_float ?? 0));
     void loadChannels();
@@ -244,11 +253,10 @@
     try {
       await api.patch(`/stores/${storeId}`, {
         name: storeName,
-        show_logo: showLogo,
-        receipt_header: receiptHeader || null,
-        receipt_footer: receiptFooter || null,
         address: address.trim() || null,
         phone: phone.trim() || null,
+        payment_options: $state.snapshot(pay),
+        ...(isOwner && expCats.length ? { expense_categories: $state.snapshot(expCats) } : {}),
         receipt_options: { ...rc, k_title: rc.k_title.trim() || RECEIPT_DEFAULTS.k_title },
         pos_dine_in_enabled: posDineIn,
         pos_table_enabled: mods.tables,
@@ -257,7 +265,7 @@
         kitchen_enabled: mods.kitchen,
         inventory_enabled: mods.inventory,
         finance_enabled: mods.finance,
-        ...(isOwner ? { tax_bp: toBp(taxPct), service_bp: toBp(servicePct), pb1_bp: toBp(pb1Pct), shift_variance_threshold: parseAmount(shiftThreshold), default_float: parseAmount(defaultFloat) } : {}),
+        ...(isOwner ? { tax_bp: toBp(taxPct), service_bp: feeOn.service ? toBp(servicePct) : 0, pb1_bp: feeOn.pb1 ? toBp(pb1Pct) : 0, shift_variance_threshold: parseAmount(shiftThreshold), default_float: parseAmount(defaultFloat) } : {}),
       });
       if (isOwner) {
         await Promise.all(
@@ -294,11 +302,8 @@
   let previewStore = $derived({
     name: storeName || language.t('storeName'),
     logo_url: displayLogoUrl,
-    show_logo: showLogo,
     address,
     phone,
-    receipt_header: receiptHeader,
-    receipt_footer: receiptFooter,
     receipt_options: rc
   });
   let previewLines = $derived(
@@ -354,81 +359,121 @@
     </div>
 
     {:else if tab === 'store'}
-    <!-- ── Store ──────────────────────────────────────────── -->
-    <div class="mb-8">
-      <p class="section-label">{language.t('store')}</p>
-      <div class="card p-5">
-
-        <label for="store-name" class="block mb-5">
-          <span class="field-label">{language.t('storeName')}</span>
-          <input id="store-name" class="field mt-1" bind:value={storeName} />
-        </label>
-
-        <label for="store-address" class="block mb-5">
-          <span class="field-label">{language.t('storeAddress')}</span>
-          <textarea id="store-address" class="field mt-1" rows="2" maxlength="300" bind:value={address}></textarea>
-        </label>
-
-        <label for="store-phone" class="block mb-5">
-          <span class="field-label">{language.t('storePhone')}</span>
-          <input id="store-phone" class="field mt-1 max-w-xs" type="tel" maxlength="30" bind:value={phone} />
-        </label>
-
-        <div class="border-t border-[var(--border)] mb-5"></div>
-
-        <!-- Logo upload -->
-        <input
-          id="logo-file-input"
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          style="display:none"
-          onchange={handleLogoFile}
-        />
-
-        <div class="mb-4 flex items-center gap-4">
-          <div class="logo-thumb">
-            {#if displayLogoUrl}
-              <img src={displayLogoUrl} alt="Store logo" class="h-full w-full object-contain p-1" />
-            {:else}
-              <div class="logo-placeholder">{(storeName || 'S').charAt(0).toUpperCase()}</div>
-            {/if}
-          </div>
-          <div class="flex-1 min-w-0">
-            <span class="field-label mb-2 block">Logo</span>
-            <button
-              type="button"
-              class="btn-outline text-sm {uploading ? 'opacity-50 pointer-events-none' : ''}"
-              onclick={() => (document.getElementById('logo-file-input') as HTMLInputElement)?.click()}
-              disabled={uploading}
-            >
-              {uploading ? language.t('loading') : language.t('chooseImage')}
-            </button>
-            <p class="mt-1 text-xs text-[var(--text-muted)]">JPEG · PNG · WebP · max 2 MB</p>
-            {#if uploadError}<p class="mt-1 text-xs text-red-600">{uploadError}</p>{/if}
-          </div>
-        </div>
-
-
-      </div>
+    <!-- ── Outlets (parent + branches) ─────────────────────── -->
+    <div class="mb-4 flex flex-wrap items-center gap-3">
+      <p class="min-w-[16rem] flex-1 text-sm leading-relaxed text-[var(--text-muted)]">{language.t('outletIntro')}</p>
+      {#if isOwner}
+        <button type="button" class="btn-primary flex shrink-0 items-center gap-1.5" onclick={() => { branchName = ''; branchError = ''; branchOpen = true; }}>
+          <span class="ms" aria-hidden="true">add</span>{language.t('addBranch')}
+        </button>
+      {/if}
     </div>
 
-    <!-- ── Branches (Owner) ────────────────────────────────── -->
-    {#if isOwner}
-      <div class="mb-8">
-        <p class="section-label">{language.t('branches')}</p>
-        <div class="card space-y-3 p-5">
-          <p class="text-xs text-[var(--text-muted)]">{language.t('branchesDesc')}</p>
-          <ul class="divide-y divide-[var(--border)]">
-            {#each session.stores as st (st.id)}
-              <li class="flex items-center gap-2 py-2 text-sm font-semibold"><span class="ms !text-[20px] text-[var(--om-brand)]">storefront</span>{st.name}</li>
-            {/each}
-          </ul>
-          {#if branchError}<div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{branchError}</div>{/if}
-          <div class="flex gap-2">
-            <input class="field min-w-0 flex-1" placeholder={language.t('branchName')} bind:value={branchName} onkeydown={(e) => { if (e.key === 'Enter') addBranch(); }} />
-            <button type="button" class="btn-primary shrink-0" disabled={addingBranch || !branchName.trim()} onclick={addBranch}>{language.t('addBranch')}</button>
+    <div class="space-y-3">
+      {#each session.stores as st (st.id)}
+        {@const isCurrent = st.id === session.selectedStore?.id}
+        {@const editing = isCurrent && editingId === st.id}
+        <div class="card p-4 {isCurrent ? '!border-[var(--om-brand)]' : ''}">
+          <div class="flex flex-wrap items-start gap-3.5">
+            <div class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[var(--om-ink)] text-[var(--om-brand-bright)]"><span class="ms" aria-hidden="true">storefront</span></div>
+            <div class="flex min-w-0 flex-1 basis-[16rem] flex-col gap-1.5">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-base font-semibold">{isCurrent ? storeName || st.name : st.name}</span>
+                <span class="rounded-full px-2.5 py-0.5 text-xs font-semibold {st.is_parent ? 'bg-[var(--om-brand-tint)] text-[var(--om-brand)]' : 'bg-[var(--om-fill-muted)] text-[var(--om-text-secondary)]'}">{st.is_parent ? language.t('parentBadge') : language.t('branchBadge')}</span>
+                {#if isCurrent}<span class="rounded-full border border-[var(--om-brand)] px-2.5 py-0.5 text-xs font-semibold text-[var(--om-brand)]">{language.t('active')}</span>{/if}
+              </div>
+              <span class="text-xs text-[var(--text-muted)]">
+                {#if st.is_parent}
+                  {st.has_branches ? language.t('parentInfo') : language.t('parentOnlyInfo')}
+                {:else}
+                  {language.t('branchInfo').replace('{parent}', st.parent_store_name ?? '')}
+                {/if}
+              </span>
+              <span class="text-xs text-[#3B3F38]">{[st.address, st.phone].filter(Boolean).join(' · ') || '—'}</span>
+              <div class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-[#3B3F38]">
+                <span>{language.t('pb1Label')} <strong>{(isCurrent ? (feeOn.pb1 ? Number(pb1Pct.replace(',', '.')) || 0 : 0) : (st.pb1_bp ?? 0) / 100)}%</strong></span>
+                <span>{language.t('serviceLabel')} <strong>{(isCurrent ? (feeOn.service ? Number(servicePct.replace(',', '.')) || 0 : 0) : (st.service_bp ?? 0) / 100)}%</strong></span>
+              </div>
+            </div>
+            <div class="flex shrink-0 items-center gap-3">
+              <label class="flex cursor-pointer items-center gap-2 text-xs font-semibold {st.is_open === false ? 'text-red-700' : 'text-[var(--om-brand)]'}" title={st.is_open === false ? language.t('outletClosedHint') : ''}>
+                {st.is_open === false ? language.t('outletClosed') : language.t('outletOpen')}
+                <Toggle compact checked={st.is_open !== false} disabled={openBusy === st.id} label={st.name} onchange={(v) => setOutletOpen(st.id, v)} />
+              </label>
+              <button type="button" class="btn-outline" aria-expanded={editing} onclick={() => { if (editing) editingId = null; else { saveError = ''; session.selectedStoreId = st.id; editingId = st.id; } }}>{editing ? language.t('close') : language.t('edit')}</button>
+            </div>
           </div>
+
+          {#if editing}
+            <div class="mt-4 grid gap-4 border-t border-[var(--border)] pt-4 sm:grid-cols-2">
+              <label for="store-name" class="block">
+                <span class="field-label">{language.t('storeName')}</span>
+                <input id="store-name" class="field mt-1" bind:value={storeName} />
+              </label>
+              <label for="store-phone" class="block">
+                <span class="field-label">{language.t('storePhone')}</span>
+                <input id="store-phone" class="field mt-1" type="tel" maxlength="30" bind:value={phone} />
+              </label>
+              <label for="store-address" class="block sm:col-span-2">
+                <span class="field-label">{language.t('storeAddress')}</span>
+                <textarea id="store-address" class="field mt-1" rows="2" maxlength="300" bind:value={address}></textarea>
+              </label>
+              {#if isOwner}
+                <div class="sm:col-span-2">
+                  {#each [['service', 'serviceLabel'], ['pb1', 'pb1Label']] as [key, label] (key)}
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] py-2 text-sm last:border-0">
+                      <label class="flex flex-1 cursor-pointer items-center justify-between gap-3">
+                        <span class="font-semibold text-[var(--espresso)]">{language.t(label as MessageKey)}</span>
+                        <Toggle compact bind:checked={feeOn[key as 'service' | 'pb1']} />
+                      </label>
+                      {#if feeOn[key as 'service' | 'pb1']}
+                        <div class="flex items-center gap-1.5">
+                          {#if key === 'service'}
+                            <input class="field !min-h-0 h-9 w-24 !py-0 text-right" inputmode="decimal" placeholder="0" aria-label={language.t('settingsServicePct')} bind:value={servicePct} />
+                          {:else}
+                            <input class="field !min-h-0 h-9 w-24 !py-0 text-right" inputmode="decimal" placeholder="0" aria-label={language.t('settingsPb1Pct')} bind:value={pb1Pct} />
+                          {/if}
+                          <span class="text-sm text-[var(--text-muted)]">%</span>
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                  <p class="pt-2 text-xs text-[var(--text-muted)]">{language.t('settingsFeesHint')}</p>
+                </div>
+              {/if}
+              <div class="flex flex-col gap-2 sm:col-span-2">
+                {#if saveError}<div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>{/if}
+                <div class="flex justify-end gap-3">
+                  <button type="button" class="btn-outline" onclick={() => { editingId = null; saveError = ''; initFromStore(); }}>{language.t('cancel')}</button>
+                  <button type="button" class="btn-primary" disabled={saving} onclick={async () => { await save(); if (!saveError) editingId = null; }}>{saving ? language.t('saving') : language.t('saveChanges')}</button>
+                </div>
+              </div>
+            </div>
+          {/if}
         </div>
+      {/each}
+    </div>
+
+    {#if branchOpen}
+      <div class="fixed inset-0 z-50 flex items-end justify-center bg-[var(--om-scrim)] backdrop-blur-sm md:items-center" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) branchOpen = false; }}>
+        <section class="flex w-full max-w-md flex-col overflow-hidden rounded-t-3xl bg-[var(--white)] md:rounded-3xl" role="dialog" aria-modal="true">
+          <div class="flex items-center gap-4 border-b border-[var(--border)] p-5">
+            <h2 class="display-font min-w-0 flex-1 truncate text-2xl font-bold text-[var(--espresso)]">{language.t('addBranch')}</h2>
+            <button class="btn-outline px-4 py-2" onclick={() => (branchOpen = false)}>{language.t('close')}</button>
+          </div>
+          <div class="space-y-3 p-5">
+            <p class="text-xs text-[var(--text-muted)]">{language.t('branchesDesc')}</p>
+            {#if branchError}<div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{branchError}</div>{/if}
+            <label class="block">
+              <span class="field-label">{language.t('branchName')}</span>
+              <input class="field mt-1" bind:value={branchName} onkeydown={(e) => { if (e.key === 'Enter') addBranch(); }} />
+            </label>
+          </div>
+          <div class="flex items-center justify-end gap-3 border-t border-[var(--border)] p-5">
+            <button class="btn-outline" onclick={() => (branchOpen = false)}>{language.t('cancel')}</button>
+            <button class="btn-primary" disabled={addingBranch || !branchName.trim()} onclick={addBranch}>{language.t('addBranch')}</button>
+          </div>
+        </section>
       </div>
     {/if}
 
@@ -455,31 +500,6 @@
       <div class="card space-y-4 p-4">
         <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
           {@render paperRow()}
-          <label class="flex cursor-pointer items-center gap-2">
-            <Toggle compact bind:checked={showLogo} />
-            <span class="text-sm font-semibold text-[var(--espresso)]">{language.t('showLogoOnReceipt')}</span>
-          </label>
-        </div>
-
-        <div class="grid gap-4 sm:grid-cols-2">
-          <label class="block">
-            <span class="field-label">{language.t('receiptHeader')}</span>
-            <textarea class="field mt-1 font-mono text-sm" rows="3" placeholder={"e.g. Selamat datang!\nWiFi: KopiSenja123"} bind:value={receiptHeader}></textarea>
-            {#if receiptHeader.trim()}
-              <span class="mt-1 block text-xs {headerOverflow ? 'font-semibold text-red-500' : 'text-[var(--text-muted)]'}">
-                {Math.max(...headerLines)}/{THERMAL_WIDTH}{#if headerOverflow} · Lines over {THERMAL_WIDTH} chars may wrap on {rc.paper}mm paper.{/if}
-              </span>
-            {/if}
-          </label>
-          <label class="block">
-            <span class="field-label">{language.t('receiptFooter')}</span>
-            <textarea class="field mt-1 font-mono text-sm" rows="3" placeholder={"e.g. Terima kasih!\nIG: @kopi.senja"} bind:value={receiptFooter}></textarea>
-            {#if receiptFooter.trim()}
-              <span class="mt-1 block text-xs {footerOverflow ? 'font-semibold text-red-500' : 'text-[var(--text-muted)]'}">
-                {Math.max(...footerLines)}/{THERMAL_WIDTH}{#if footerOverflow} · Lines over {THERMAL_WIDTH} chars may wrap on {rc.paper}mm paper.{/if}
-              </span>
-            {/if}
-          </label>
         </div>
       </div>
     </div>
@@ -524,97 +544,172 @@
     {/if}
     {:else if tab === 'pos'}
     <!-- ── POS ─────────────────────────────────────────────── -->
-    <div class="mb-8">
+    <div class="mb-5">
       <p class="section-label">POS</p>
-      <div class="card p-5 space-y-3">
-
-        <label class="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-[var(--border)] p-3">
-          <div class="text-sm font-semibold text-[var(--espresso)]">{language.t('serviceOptionTitle')}</div>
-          <Toggle bind:checked={posDineIn} />
+      <div class="card px-4 py-1">
+        <label class="flex cursor-pointer items-center justify-between gap-3 border-b border-[var(--border)] py-2 text-sm">
+          <span class="font-semibold text-[var(--espresso)]">{language.t('serviceOptionTitle')}</span>
+          <Toggle compact bind:checked={posDineIn} />
         </label>
-
-        <div class="rounded-xl border border-[var(--border)] p-3">
-          <label class="flex cursor-pointer items-center justify-between gap-3">
-            <div class="text-sm font-semibold text-[var(--espresso)]">{language.t('tableNumber')}</div>
-            <Toggle bind:checked={mods.tables} />
+        <div class="flex items-center justify-between gap-3 border-b border-[var(--border)] py-2 text-sm">
+          <label class="flex flex-1 cursor-pointer items-center justify-between gap-3">
+            <span class="font-semibold text-[var(--espresso)]">{language.t('tableNumber')}</span>
+            <Toggle compact bind:checked={mods.tables} />
           </label>
           {#if mods.tables}
-            <div class="mt-3">
-              <label class="block">
-                <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('tableCount')}</span>
-                <input class="field w-28" type="number" min="1" max="200" bind:value={posTableCount} />
-              </label>
-            </div>
+            <input class="field !min-h-0 h-9 w-20 !py-0" type="number" min="1" max="200" aria-label={language.t('tableCount')} title={language.t('tableCount')} bind:value={posTableCount} />
           {/if}
         </div>
-
-        <label class="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-[var(--border)] p-3">
-          <div class="text-sm font-semibold text-[var(--espresso)]">{language.t('customerName')}</div>
-          <Toggle bind:checked={posCustomerName} />
+        <label class="flex cursor-pointer items-center justify-between gap-3 py-2 text-sm">
+          <span class="font-semibold text-[var(--espresso)]">{language.t('customerName')}</span>
+          <Toggle compact bind:checked={posCustomerName} />
         </label>
-
       </div>
     </div>
 
-    <!-- ── Service charge & PB1 (Owner) ────────────────────── -->
-    {#if isOwner}
-      <div class="mb-8">
-        <p class="section-label">{language.t('serviceLabel')} & {language.t('pb1Label')}</p>
-        <div class="card grid gap-3 p-5 sm:grid-cols-2">
-          <label class="block">
-            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('settingsServicePct')}</span>
-            <input class="field" inputmode="decimal" placeholder="0" bind:value={servicePct} />
-          </label>
-          <label class="block">
-            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('settingsPb1Pct')}</span>
-            <input class="field" inputmode="decimal" placeholder="0" bind:value={pb1Pct} />
-          </label>
-          <p class="text-xs text-[var(--text-muted)] sm:col-span-2">{language.t('settingsFeesHint')}</p>
+    {:else if tab === 'payment'}
+    <!-- ── Payment methods ─────────────────────────────────── -->
+    {#snippet variantEditor(v: MethodVariants, kind: 'edc' | 'qris', groups: [string, string[]][])}
+      {@const known = groups.flatMap(([, items]) => items)}
+      {@const others = v.options.filter((o) => !known.includes(o))}
+      <div class="space-y-2 pb-3">
+        {#each groups as [label, items] (label)}
+          <div>
+            <span class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">{label}</span>
+            <div class="flex flex-wrap gap-1.5">
+              {#each items as name (name)}
+                {@const on = v.options.includes(name)}
+                <button type="button" aria-pressed={on} class="{chip(on)} h-8 text-xs" onclick={() => (v.options = on ? v.options.filter((o) => o !== name) : [...v.options, name])}>{name}</button>
+              {/each}
+            </div>
+          </div>
+        {/each}
+        <div>
+          <span class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('payOthers')}</span>
+          <div class="flex flex-wrap items-center gap-1.5">
+            {#each others as name (name)}
+              <button type="button" class="{chip(true)} h-8 text-xs" aria-label={name} onclick={() => (v.options = v.options.filter((o) => o !== name))}>{name}<span class="ms !text-[14px]" aria-hidden="true">close</span></button>
+            {/each}
+            <input
+              class="field !min-h-0 h-8 w-40 !py-0 text-xs"
+              maxlength="40"
+              placeholder={language.t('payAddOther')}
+              bind:value={payCustom[kind]}
+              onkeydown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                const name = payCustom[kind].trim();
+                if (name && !v.options.some((o) => o.toLowerCase() === name.toLowerCase())) v.options = [...v.options, name];
+                payCustom[kind] = '';
+              }}
+            />
+          </div>
         </div>
       </div>
-    {/if}
+    {/snippet}
+
+    <div class="mb-5">
+      <p class="section-label">{language.t('settingsTabPay')}</p>
+      <div class="card px-4 py-1">
+        <label class="flex cursor-pointer items-center justify-between gap-3 border-b border-[var(--border)] py-2 text-sm">
+          <span class="font-semibold text-[var(--espresso)]">{language.t('cash')}</span>
+          <Toggle compact bind:checked={pay.cash} />
+        </label>
+        <div class="border-b border-[var(--border)]">
+          <label class="flex cursor-pointer items-center justify-between gap-3 py-2 text-sm">
+            <span class="font-semibold text-[var(--espresso)]">{language.t('payEdc')}</span>
+            <Toggle compact bind:checked={pay.edc.enabled} />
+          </label>
+          {#if pay.edc.enabled}{@render variantEditor(pay.edc, 'edc', [[language.t('payBanks'), BANK_PRESETS]])}{/if}
+        </div>
+        <div class="border-b border-[var(--border)]">
+          <label class="flex cursor-pointer items-center justify-between gap-3 py-2 text-sm">
+            <span class="font-semibold text-[var(--espresso)]">{language.t('payQris')}</span>
+            <Toggle compact bind:checked={pay.qris.enabled} />
+          </label>
+          {#if pay.qris.enabled}{@render variantEditor(pay.qris, 'qris', [[language.t('payBanks'), BANK_PRESETS], [language.t('payWallets'), QRIS_WALLET_PRESETS]])}{/if}
+        </div>
+        <label class="flex cursor-pointer items-center justify-between gap-3 py-2 text-sm">
+          <span class="font-semibold text-[var(--espresso)]">{language.t('transfer')}</span>
+          <Toggle compact bind:checked={pay.transfer} />
+        </label>
+      </div>
+      <p class="mt-2 px-1 text-xs text-[var(--text-muted)]">{language.t('payHint')}</p>
+    </div>
 
     {:else if tab === 'channels'}
     <!-- ── Online platforms (Owner) ────────────────────────── -->
     {#if isOwner && channelForms.length}
-      <div class="mb-8">
+      <div class="mb-5">
         <p class="section-label">{language.t('channelsSettings')}</p>
-        <div class="card space-y-3 p-5">
-          <p class="text-xs text-[var(--text-muted)]">{language.t('channelsSettingsDesc')}</p>
+        <div class="card px-4 py-1">
+          <p class="border-b border-[var(--border)] py-2 text-xs text-[var(--text-muted)]">{language.t('channelsSettingsDesc')}</p>
           {#each channelForms as c (c.channel)}
-            <div class="rounded-xl border border-[var(--border)] p-3">
-              <label class="flex cursor-pointer items-center justify-between gap-3">
-                <span class="text-sm font-semibold text-[var(--espresso)]">{CHANNEL_NAMES[c.channel]}</span>
-                <Toggle bind:checked={c.enabled} />
+            <div class="border-b border-[var(--border)] py-2">
+              <label class="flex cursor-pointer items-center justify-between gap-3 text-sm">
+                <span class="font-semibold text-[var(--espresso)]">{CHANNEL_NAMES[c.channel]}</span>
+                <Toggle compact bind:checked={c.enabled} />
               </label>
               {#if c.enabled}
-                <div class="mt-3 grid grid-cols-2 gap-3">
-                  <label class="block">
-                    <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('channelCommission')}</span>
-                    <input class="field" inputmode="decimal" placeholder="0" bind:value={c.commission} />
+                <div class="mt-2 grid grid-cols-3 gap-2">
+                  <label class="block min-w-0">
+                    <span class="mb-0.5 block truncate text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('channelCommission')}</span>
+                    <input class="field !min-h-0 h-9 !py-0 text-right" inputmode="decimal" placeholder="0" bind:value={c.commission} />
                   </label>
-                  <label class="block">
-                    <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('channelMarkup')}</span>
-                    <input class="field" inputmode="decimal" placeholder="0" bind:value={c.markup} />
+                  <label class="block min-w-0">
+                    <span class="mb-0.5 block truncate text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('channelMarkup')}</span>
+                    <input class="field !min-h-0 h-9 !py-0 text-right" inputmode="decimal" placeholder="0" bind:value={c.markup} />
                   </label>
-                  <label class="col-span-2 block">
-                    <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('channelPayoutLag')}</span>
-                    <input class="field" inputmode="numeric" placeholder="2" bind:value={c.lag} />
+                  <label class="block min-w-0">
+                    <span class="mb-0.5 block truncate text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('channelPayoutLag')}</span>
+                    <input class="field !min-h-0 h-9 !py-0 text-right" inputmode="numeric" placeholder="2" bind:value={c.lag} />
                   </label>
                 </div>
               {/if}
             </div>
           {/each}
-          <label class="block">
-            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('taxRate')}</span>
-            <input class="field max-w-[10rem]" inputmode="decimal" placeholder="0" bind:value={taxPct} />
+          <div class="py-2">
+            <div class="flex items-center justify-between gap-3 text-sm">
+              <span class="font-semibold text-[var(--espresso)]">{language.t('taxRate')}</span>
+              <input class="field !min-h-0 h-9 w-24 !py-0 text-right" inputmode="decimal" placeholder="0" aria-label={language.t('taxRate')} bind:value={taxPct} />
+            </div>
             <span class="mt-1 block text-xs text-[var(--text-muted)]">{language.t('taxRateDesc')}</span>
-          </label>
+          </div>
         </div>
       </div>
     {/if}
 
     {:else if tab === 'policy'}
+    {#if isOwner}
+      <div class="mb-5">
+        <p class="section-label">{language.t('expCatTitle')}</p>
+        <div class="card space-y-3 p-4">
+          <div class="flex flex-wrap items-center gap-1.5">
+            {#each expCats as name (name)}
+              <button type="button" class="{chip(true)} h-8 text-xs" aria-label={name} disabled={expCats.length <= 1} onclick={() => (expCats = expCats.filter((c) => c !== name))}>{name}<span class="ms !text-[14px]" aria-hidden="true">close</span></button>
+            {/each}
+            <input
+              class="field !min-h-0 h-8 w-40 !py-0 text-xs"
+              maxlength="50"
+              placeholder={language.t('expCatAdd')}
+              bind:value={newCat}
+              onkeydown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                const name = newCat.trim();
+                if (name && expCats.length < 40 && !expCats.some((c) => c.toLowerCase() === name.toLowerCase())) expCats = [...expCats, name];
+                newCat = '';
+              }}
+            />
+          </div>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <p class="text-xs text-[var(--text-muted)]">{language.t('expCatHint')}</p>
+            <button type="button" class="text-xs font-bold text-[var(--warm-brown)]" onclick={() => (expCats = [...DEFAULT_EXPENSE_CATEGORIES])}>{language.t('expCatReset')}</button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
     <!-- ── Shift & cash (Owner) ────────────────────────────── -->
     {#if isOwner}
       <div class="mb-8">
@@ -635,17 +730,19 @@
 
     {/if}
 
-    {#if tab !== 'modules'}
-    <!-- ── Save ────────────────────────────────────────────── -->
-    {#if saveError}
-      <div class="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>
-    {/if}
-    {#if saveSuccess}
-      <div class="mb-4 rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-700">{saveSuccess}</div>
-    {/if}
-    <button class="btn-primary w-full" onclick={save} disabled={saving}>
-      {saving ? language.t('saving') : language.t('saveChanges')}
-    </button>
+    {#if tab !== 'modules' && tab !== 'store'}
+    <!-- ── Save (floating) ─────────────────────────────────── -->
+    <div class="sticky bottom-4 z-30 mt-6 space-y-2">
+      {#if saveError}
+        <div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 shadow-lg">{saveError}</div>
+      {/if}
+      {#if saveSuccess}
+        <div class="rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-700 shadow-lg">{saveSuccess}</div>
+      {/if}
+      <button class="btn-primary w-full shadow-lg" onclick={save} disabled={saving}>
+        {saving ? language.t('saving') : language.t('saveChanges')}
+      </button>
+    </div>
 
     {/if}
   </div>

@@ -6,13 +6,13 @@
   import { language } from '$lib/i18n/language.svelte';
   import type { MessageKey } from '$lib/i18n/messages';
   import { session } from '$lib/stores/session.svelte';
-  import { EXPENSE_CATEGORIES } from '$lib/utils/finance';
+  import { expenseCategories } from '$lib/utils/finance';
   import { chip, seg, SEG_GROUP } from '$lib/utils/ui';
   import { formatRupiah } from '$lib/utils/format';
   import { PAGE_SIZE, pageCount } from '$lib/utils/paging';
   import Pagination from './Pagination.svelte';
 
-  const CATEGORIES = EXPENSE_CATEGORIES;
+  let CATEGORIES = $derived(expenseCategories(session.selectedStore));
   const SOURCES: { id: ExpenseSource; key: MessageKey }[] = [
     { id: 'BANK', key: 'finSrcBank' },
     { id: 'EWALLET', key: 'finSrcEwallet' },

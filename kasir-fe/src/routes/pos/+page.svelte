@@ -13,6 +13,8 @@
   import { buildReceiptBytes } from '$lib/utils/escpos';
   import ReceiptView from '$lib/components/ReceiptView.svelte';
   import { customerReceipt, receiptOptions } from '$lib/utils/receipt';
+  import { chip, CHIP_ROW } from '$lib/utils/ui';
+  import { enabledMethods, paymentOptions, providersFor } from '$lib/utils/payment';
 
   type CartLine = {
     lineId: string;
@@ -22,12 +24,7 @@
     addonChoiceIds: string[];
   };
 
-  const payments: Array<{ value: PaymentMethod; icon: string }> = [
-    { value: 'CASH', icon: '💵' },
-    { value: 'CARD', icon: '💳' },
-    { value: 'QRIS', icon: '▦' },
-    { value: 'TRANSFER', icon: '↗' }
-  ];
+  const PAYMENT_ICONS: Record<string, string> = { CASH: '💵', CARD: '💳', QRIS: '▦', TRANSFER: '↗' };
 
   function paymentLabel(method: PaymentMethod): string {
     if (method === 'CASH') return language.t('cash');
@@ -43,6 +40,17 @@
   let search = $state('');
   let cart = $state<CartLine[]>([]);
   let paymentMethod = $state<PaymentMethod>('CASH');
+  let paymentProvider = $state('');
+  let payOpts = $derived(paymentOptions(session.selectedStore));
+  let payments = $derived(enabledMethods(payOpts).map((value) => ({ value, icon: PAYMENT_ICONS[value] })));
+  let providers = $derived(providersFor(payOpts, paymentMethod));
+  // keep the picked method / bank valid when store settings or the method change
+  $effect(() => {
+    if (payments.length && !payments.some((p) => p.value === paymentMethod)) paymentMethod = payments[0].value;
+  });
+  $effect(() => {
+    if (!providers.includes(paymentProvider)) paymentProvider = providers[0] ?? '';
+  });
   let discountCode = $state('');
   let loading = $state(false);
   let checkingOut = $state(false);
@@ -395,6 +403,7 @@
       const online = onlineMode && channel;
       const order = await api.post<Order>(`/stores/${storeId}/orders`, toOrderPayload({
         paymentMethod,
+        paymentProvider: providers.length ? paymentProvider : null,
         channel: online ? channel : null,
         channelOrderId: online ? onlineOrderId : null,
         appTotal: online ? appTotalNum : null,
@@ -902,6 +911,13 @@
           </button>
         {/each}
       </div>
+      {#if providers.length}
+        <div class="{CHIP_ROW} mb-2" role="radiogroup" aria-label={language.t('payProvider')}>
+          {#each providers as name (name)}
+            <button type="button" role="radio" aria-checked={paymentProvider === name} class="{chip(paymentProvider === name)} h-8 text-xs" onclick={() => (paymentProvider = name)}>{name}</button>
+          {/each}
+        </div>
+      {/if}
 
       {/if}
 
@@ -1046,6 +1062,13 @@
             </button>
           {/each}
         </div>
+        {#if providers.length}
+          <div class="{CHIP_ROW} mb-2" role="radiogroup" aria-label={language.t('payProvider')}>
+            {#each providers as name (name)}
+              <button type="button" role="radio" aria-checked={paymentProvider === name} class="{chip(paymentProvider === name)} h-8 text-xs" onclick={() => (paymentProvider = name)}>{name}</button>
+            {/each}
+          </div>
+        {/if}
         {/if}
         <div class="order-summary">
           <div class="summary-row"><span>{language.t('subtotal')}</span><span>{formatRupiah(subtotal)}</span></div>

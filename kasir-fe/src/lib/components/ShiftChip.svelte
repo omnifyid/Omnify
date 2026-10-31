@@ -4,7 +4,7 @@
   import { language } from '$lib/i18n/language.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { shiftState } from '$lib/stores/shift.svelte';
-  import { CASH_IN_CATEGORIES, CASH_OUT_TRANSFERS, EXPENSE_CATEGORIES, formatDigits, parseAmount } from '$lib/utils/finance';
+  import { CASH_IN_CATEGORIES, CASH_OUT_TRANSFERS, expenseCategories, formatDigits, parseAmount } from '$lib/utils/finance';
   import { formatRupiah } from '$lib/utils/format';
   import { chip } from '$lib/utils/ui';
 
@@ -28,7 +28,8 @@
   let counted = $derived(parseAmount(amount));
   let variance = $derived(shift?.expected_cash != null ? counted - shift.expected_cash : 0);
   let overLimit = $derived(!!cur && Math.abs(variance) > cur.variance_threshold);
-  let categories = $derived(mode === 'in' ? CASH_IN_CATEGORIES : [...CASH_OUT_TRANSFERS, ...EXPENSE_CATEGORIES]);
+  let expCats = $derived(expenseCategories(session.selectedStore));
+  let categories = $derived(mode === 'in' ? CASH_IN_CATEGORIES : [...CASH_OUT_TRANSFERS, ...expCats]);
 
   $effect(() => {
     void session.selectedStore?.id;
@@ -164,7 +165,7 @@
             <div>
               <span class={label}>{language.t('shiftMovCategory')}</span>
               <div class="flex flex-wrap gap-1.5">{#each categories as c}<button class={chip(category === c)} style="min-height: 40px" onclick={() => (category = c)}>{c}</button>{/each}</div>
-              {#if mode === 'out' && EXPENSE_CATEGORIES.includes(category)}<div class="mt-1 text-xs text-[var(--text-muted)]">→ {language.t('finTabExpenses')}</div>{/if}
+              {#if mode === 'out' && expCats.includes(category)}<div class="mt-1 text-xs text-[var(--text-muted)]">→ {language.t('finTabExpenses')}</div>{/if}
             </div>
             <label class="block"><span class={label}>{language.t('shiftMovReason')}</span><input class="field" maxlength="200" bind:value={text} /></label>
           {/if}

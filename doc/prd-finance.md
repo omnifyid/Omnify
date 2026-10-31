@@ -27,7 +27,7 @@ Nav item `/finance` (Owner/Manager) with three tabs: **Shift & Kas**, **Pengelua
 |-------|-------|
 | `expenses` | `date`, `category`, `description`, `amount` (int Rupiah), `source` (`BANK`/`EWALLET`/`PETTY`/`DRAWER`), `recurring`, `status` (`DRAFT`/`POSTED`), `user_id` |
 
-- Categories are a fixed list in `ExpensesPanel.svelte` (Sewa, Listrik & air, Gaji & upah, Bahan non-stok, Marketing, Perbaikan & perawatan, Transport, Internet & software, Lain-lain).
+- Categories are per store: `stores.expense_categories` (JSON list, Owner edits it in Settings → Kebijakan); null means the defaults (Sewa, Listrik & air, Gaji & upah, Bahan non-stok, Marketing, Perbaikan & perawatan, Transport, Internet & software, Lain-lain). Past expenses keep their category text. A drawer cash-out whose category is in the list also creates an expense.
 - Creating a `recurring` expense also creates a `DRAFT` for the same day next month (clamped to month end). Confirming a draft posts it and creates the next draft.
 - Only drafts can be deleted. Summary totals count `POSTED` only; drafts always show in the list regardless of the period.
 

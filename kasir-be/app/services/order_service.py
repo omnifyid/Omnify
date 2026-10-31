@@ -19,6 +19,7 @@ from app.models import (
 from app.models.discount import DiscountScope, DiscountType
 from app.models.order import KitchenStatus, OrderStatus, PaymentMethod
 from app.models.refund import OrderRefund, RefundMethod, RefundType
+from app.schemas.store import PaymentOptions
 from app.schemas.order import (
     CartItemIn,
     OrderCreate,
@@ -140,6 +141,30 @@ async def list_orders(
     return list((await db.execute(q)).scalars().all()), total
 
 
+async def _check_payment_method(store_id: uuid.UUID, payload, db: AsyncSession) -> str | None:
+    """Reject a method the store switched off; return the validated EDC bank / QRIS provider."""
+    method = payload.payment_method
+    opts = PaymentOptions.model_validate(
+        (await db.execute(select(Store.payment_options).where(Store.id == store_id))).scalar_one_or_none() or {}
+    )
+    if method == PaymentMethod.CASH and not opts.cash:
+        raise BadRequestError("Cash payment is turned off for this outlet")
+    if method == PaymentMethod.TRANSFER and not opts.transfer:
+        raise BadRequestError("Transfer payment is turned off for this outlet")
+    variants = {PaymentMethod.CARD: opts.edc, PaymentMethod.QRIS: opts.qris}.get(method)
+    if variants is None:
+        return None
+    if not variants.enabled:
+        raise BadRequestError(f"{method.value} payment is turned off for this outlet")
+    if not variants.options:
+        return None
+    provider = (getattr(payload, "payment_provider", None) or "").strip()
+    match = next((o for o in variants.options if o.lower() == provider.lower()), None) if provider else None
+    if not match:
+        raise BadRequestError("Choose a bank / provider for this payment method")
+    return match
+
+
 async def create_order(
     store_id: uuid.UUID,
     operator_id: uuid.UUID | None,
@@ -156,6 +181,8 @@ async def create_order(
     5. Write Order + OrderItems in one transaction
     """
     async with db.begin_nested():  # savepoint; outer session commits
+        if not (await db.execute(select(Store.is_open).where(Store.id == store_id))).scalar_one_or_none():
+            raise BadRequestError("Outlet is closed")
         line_results = []
 
         # Online platform orders: platform price markup, no discounts, commission + included tax
@@ -343,12 +370,17 @@ async def create_order(
                 raise BadRequestError("Cash received is less than the total")
             cash_received = payload.cash_received
 
+        payment_provider = None
+        if not channel and operator_id is not None:  # staff POS only; QR self-orders are always cash
+            payment_provider = await _check_payment_method(store_id, payload, db)
+
         # Write Order
         order = Order(
             store_id=store_id,
             operator_id=operator_id,
             order_number=order_number,
             payment_method=payload.payment_method,
+            payment_provider=payment_provider,
             subtotal=subtotal,
             discount_amount=discount_amount,
             total_amount=total_amount,

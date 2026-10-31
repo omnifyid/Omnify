@@ -9,6 +9,7 @@ export type CartOrderItem = {
 
 export function toOrderPayload(input: {
   paymentMethod?: PaymentMethod;
+  paymentProvider?: string | null;
   discountCode?: string;
   items: CartOrderItem[];
   orderType?: 'DINE_IN' | 'TAKE_AWAY' | null;
@@ -23,6 +24,7 @@ export function toOrderPayload(input: {
 }) {
   return {
     payment_method: input.channel ? undefined : input.paymentMethod,
+    payment_provider: input.channel ? undefined : input.paymentProvider || undefined,
     discount_code: input.channel ? undefined : input.discountCode?.trim() || undefined,
     items: input.items.map((item) => ({
       item_id: item.itemId,

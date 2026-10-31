@@ -224,7 +224,10 @@ async def add_movement(store_id, shift_id, user_id, payload: CashMovementCreate,
         reason=payload.reason.strip(),
     )
     db.add(mv)
-    if payload.type == CashMovementType.OUT and mv.category in EXPENSE_CATEGORIES:
+    categories = (
+        await db.execute(select(Store.expense_categories).where(Store.id == store_id))
+    ).scalar_one_or_none() or EXPENSE_CATEGORIES
+    if payload.type == CashMovementType.OUT and mv.category in categories:
         exp = Expense(
             store_id=store_id,
             user_id=user_id,

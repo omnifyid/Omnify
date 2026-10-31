@@ -74,6 +74,7 @@ class Order(Base, TimestampMixin):
     driver_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     service_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # dine-in service charge, in total_amount
     pb1_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # restaurant tax added on top, in total_amount
+    payment_provider: Mapped[str | None] = mapped_column(String(40), nullable=True)  # EDC bank / QRIS provider
     cash_received: Mapped[int | None] = mapped_column(Integer, nullable=True)  # cash handed over, for the change line on receipts
     refunded_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     expected_payout_date: Mapped[date | None] = mapped_column(Date, nullable=True)

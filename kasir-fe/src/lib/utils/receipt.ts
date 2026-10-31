@@ -1,5 +1,5 @@
-import { mediaUrl } from '$lib/api/client';
 import type { Order, Store } from '$lib/api/types';
+import { paymentText } from '$lib/utils/payment';
 import { language } from '$lib/i18n/language.svelte';
 import { formatDateTime, formatRupiah } from '$lib/utils/format';
 
@@ -85,12 +85,9 @@ export function orderWhere(order: Order): string {
 export function customerReceipt(order: Order, store: StoreLike, o: ReceiptOptions, cashPaid = 0): ReceiptLine[] {
   const t = language.t.bind(language);
   const out: ReceiptLine[] = [];
-  const logo = store.show_logo !== false ? mediaUrl(store.logo_url) : null;
-  if (logo) out.push({ t: 'logo', url: logo });
   out.push({ t: 'text', text: store.name, align: 'center', bold: true, big: true });
   if (o.show_addr) lines_(store.address).forEach((text) => out.push({ t: 'text', text, align: 'center', muted: true }));
   if (o.show_phone && store.phone?.trim()) out.push({ t: 'text', text: store.phone.trim(), align: 'center', muted: true });
-  lines_(store.receipt_header).forEach((text) => out.push({ t: 'text', text, align: 'center', muted: true }));
   out.push({ t: 'rule' });
 
   if (order.created_at) out.push({ t: 'text', text: formatDateTime(order.created_at) });
@@ -127,7 +124,7 @@ export function customerReceipt(order: Order, store: StoreLike, o: ReceiptOption
   out.push({ t: 'row', left: t('total').toUpperCase(), right: formatRupiah(order.total_amount), bold: true, big: true });
 
   if (o.show_pay) {
-    out.push({ t: 'row', left: t('payment'), right: order.payment_method });
+    out.push({ t: 'row', left: t('payment'), right: paymentText(order) });
     const tendered = order.cash_received ?? cashPaid;
     if (tendered > 0) {
       out.push({ t: 'row', left: t('cash'), right: formatRupiah(tendered) });
@@ -136,9 +133,7 @@ export function customerReceipt(order: Order, store: StoreLike, o: ReceiptOption
   }
   out.push({ t: 'rule' });
 
-  const footer = lines_(store.receipt_footer);
-  if (footer.length) footer.forEach((text) => out.push({ t: 'text', text, align: 'center', muted: true }));
-  else out.push({ t: 'text', text: t('thankYou'), align: 'center', muted: true });
+  out.push({ t: 'text', text: t('thankYou'), align: 'center', muted: true });
   return out;
 }
 

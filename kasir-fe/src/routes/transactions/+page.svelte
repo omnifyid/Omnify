@@ -13,6 +13,7 @@
   import Pagination from '$lib/components/Pagination.svelte';
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
   import { chip, CHIP_ROW, seg, SEG_GROUP } from '$lib/utils/ui';
+  import { paymentText } from '$lib/utils/payment';
   import { PAGE_SIZE } from '$lib/utils/paging';
 
   type Period = 'today' | 'yday' | '7d' | '30d';
@@ -508,7 +509,7 @@
       {#if !o.channel && (o.status === 'CONFIRMED' || o.status === 'COMPLETED')}
         <div class="flex items-center gap-2.5 rounded-[12px] border border-[var(--om-border)] p-3">
           <span class="ms text-[var(--om-brand)]">verified</span>
-          <span>{language.t('txPaidWith')} {formatRupiah(o.total_amount)} {language.t('txWith')} {o.payment_method}</span>
+          <span>{language.t('txPaidWith')} {formatRupiah(o.total_amount)} {language.t('txWith')} {paymentText(o)}</span>
         </div>
       {/if}
     </div>

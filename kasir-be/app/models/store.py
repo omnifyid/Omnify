@@ -19,6 +19,7 @@ class Store(Base, TimestampMixin):
     logo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     self_order_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_open: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="true")  # temporary open/closed
     selforder_is_open: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     show_logo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     pos_dine_in_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -37,6 +38,10 @@ class Store(Base, TimestampMixin):
     phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # paper width and what the customer receipt / kitchen ticket show; null = every default (schemas.store.ReceiptOptions)
     receipt_options: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # enabled payment methods + EDC banks / QRIS providers; null = all on, no variants (schemas.store.PaymentOptions)
+    # expense categories; null = models.finance.EXPENSE_CATEGORIES
+    expense_categories: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    payment_options: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     receipt_header: Mapped[str | None] = mapped_column(Text, nullable=True)
     receipt_footer: Mapped[str | None] = mapped_column(Text, nullable=True)
 

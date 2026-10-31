@@ -86,8 +86,10 @@ STORES = [
             pos_table_enabled=True, pos_table_count=12, pos_customer_name_enabled=True,
             kitchen_enabled=True, service_bp=500, pb1_bp=1000, tax_bp=1100,
             shift_variance_threshold=20000, default_float=500000,
-            receipt_header="KOPI SENJA KEMANG\nJl. Kemang Raya No. 18, Jakarta Selatan",
+            address="Jl. Kemang Raya No. 18, Jakarta Selatan", phone="021-7199-0418",
+            receipt_header="Buka setiap hari 07.00 - 22.00",
             receipt_footer="Terima kasih! IG @kopisenja",
+            receipt_options={"paper": "58", "k_title": "Pesanan Baru"},
         ),
         "channels": {
             "GOFOOD": (2000, 1500, 2), "GRABFOOD": (2000, 1500, 3), "SHOPEEFOOD": (1500, 1000, 4),
@@ -112,8 +114,10 @@ STORES = [
             pos_table_enabled=False, pos_table_count=10, pos_customer_name_enabled=False,
             kitchen_enabled=True, service_bp=0, pb1_bp=1000, tax_bp=1100,
             shift_variance_threshold=10000, default_float=300000,
-            receipt_header="KOPI SENJA SENOPATI\nJl. Senopati No. 62, Jakarta Selatan",
+            address="Jl. Senopati No. 62, Kebayoran Baru, Jakarta Selatan", phone="021-2751-6620",
+            receipt_header="WiFi: KopiSenja123",
             receipt_footer="Terima kasih sudah mampir!",
+            receipt_options={"paper": "80", "show_phone": False, "k_title": "Tiket Dapur", "k_server": False},
         ),
         "channels": {"GOFOOD": (2000, 1500, 2), "GRABFOOD": (2200, 1500, 3)},
         "members": {
@@ -136,9 +140,11 @@ STORES = [
         "settings": dict(
             self_order_enabled=False, selforder_is_open=False, pos_dine_in_enabled=False,
             pos_table_enabled=False, pos_table_count=10, pos_customer_name_enabled=False,
-            kitchen_enabled=False, service_bp=0, pb1_bp=0, tax_bp=0,
+            kitchen_enabled=False, inventory_enabled=False, service_bp=0, pb1_bp=0, tax_bp=0,
             shift_variance_threshold=20000, default_float=200000,
-            receipt_header="KOPI SENJA BSD", receipt_footer="",
+            address="Ruko Golden Boulevard Blok C-7, BSD City", phone="021-5316-0287",
+            receipt_header="", receipt_footer="",
+            receipt_options={"paper": "58", "show_cashier": False, "show_cust": False},
         ),
         "channels": {},
         "members": {
@@ -686,6 +692,10 @@ def _gen_orders(ctx: _Ctx, sd: dict) -> list[dict]:
                     if cid not in channel_ids:
                         channel_ids.add(cid)
                         break
+            cash_received = None
+            if payment == "CASH":  # customers hand over a round amount at or above the total
+                steps = [total] + [-(-total // unit) * unit for unit in (5000, 10000, 50000, 100000)]
+                cash_received = rng.choices(steps, weights=[25, 25, 25, 15, 10])[0]
             operator = ctx.users[rng.choice(cashiers)].id
             table = None
             if dine and store.pos_table_enabled:
@@ -702,7 +712,7 @@ def _gen_orders(ctx: _Ctx, sd: dict) -> list[dict]:
                 app_total=(total if rng.random() > 0.05 else total + 2000) if online else None,
                 commission_amount=commission, expected_payout=payout, tax_amount=tax,
                 driver_name=rng.choice(DRIVERS) if online else None,
-                service_amount=service, pb1_amount=pb1,
+                service_amount=service, pb1_amount=pb1, cash_received=cash_received,
                 expected_payout_date=(day_key + timedelta(days=setting[2])) if online else None,
                 confirmed_at=ts + timedelta(minutes=1), completed_at=(ts + timedelta(minutes=rng.randint(15, 45))) if status == OrderStatus.COMPLETED else None,
                 created_at=_naive(ts), updated_at=_naive(ts + timedelta(minutes=20)),

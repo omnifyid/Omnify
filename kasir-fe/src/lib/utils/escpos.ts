@@ -1,12 +1,18 @@
-import type { Order } from '$lib/api/types';
-import { formatDateTime, formatRupiah } from '$lib/utils/format';
+import type { Order, Store } from '$lib/api/types';
+import {
+	customerReceipt,
+	kitchenTicket,
+	paperChars,
+	receiptOptions,
+	type ReceiptLine,
+	type ReceiptOptions
+} from '$lib/utils/receipt';
 
 const ESC = 0x1b;
 const GS = 0x1d;
 const LF = 0x0a;
-const WIDTH = 32;
-// 58mm paper printable width at 203 DPI ≈ 384 dots = 48 bytes per row
-const PAPER_PX = 384;
+// printable dots per row at 203 DPI: 384 on 58 mm paper, 576 on 80 mm
+const paperPx = (paper: '58' | '80') => (paper === '80' ? 576 : 384);
 
 function cmd(...bytes: number[]): Uint8Array {
 	return new Uint8Array(bytes);
@@ -31,32 +37,32 @@ const FEED   = (n: number) => cmd(ESC, 0x64, n);
 const CUT    = () => cmd(GS, 0x56, 0x42, 0x00);
 const NL     = () => new Uint8Array([LF]);
 
-function sep(char = '-'): Uint8Array {
-	return txt(char.repeat(WIDTH) + '\n');
-}
-
-function padLine(left: string, right: string): string {
-	const maxLeft = WIDTH - right.length - 1;
+function padLine(left: string, right: string, width: number): string {
+	const maxLeft = Math.max(1, width - right.length - 1);
 	const l = left.length > maxLeft ? left.slice(0, maxLeft - 1) + '.' : left;
-	return l + ' '.repeat(WIDTH - l.length - right.length) + right;
+	return l + ' '.repeat(Math.max(1, width - l.length - right.length)) + right;
 }
 
-function snapshotLabel(snapshot: unknown[] | null | undefined): string {
-	if (!snapshot?.length) return '';
-	return snapshot
-		.map((e) => {
-			if (typeof e === 'string') return e;
-			if (e && typeof e === 'object') {
-				const r = e as Record<string, unknown>;
-				return r.name ?? r.label ?? r.choice_name ?? r.item_name ?? '';
+/** Wraps on spaces so long header/footer lines do not run off the paper. */
+function wrapText(text: string, width: number): string[] {
+	const out: string[] = [];
+	for (const raw of text.split('\n')) {
+		let line = '';
+		for (const word of raw.split(' ')) {
+			const next = line ? `${line} ${word}` : word;
+			if (next.length <= width) line = next;
+			else {
+				if (line) out.push(line);
+				line = word;
+				while (line.length > width) { out.push(line.slice(0, width)); line = line.slice(width); }
 			}
-			return '';
-		})
-		.filter(Boolean)
-		.join(', ');
+		}
+		out.push(line);
+	}
+	return out;
 }
 
-async function logoToRasterBytes(url: string): Promise<Uint8Array | null> {
+async function logoToRasterBytes(url: string, PAPER_PX: number): Promise<Uint8Array | null> {
 	try {
 		const resp = await fetch(url);
 		if (!resp.ok) return null;
@@ -104,128 +110,47 @@ async function logoToRasterBytes(url: string): Promise<Uint8Array | null> {
 	}
 }
 
-export async function buildReceiptBytes(
-	order: Order,
-	storeName: string,
-	cashPaid: number,
-	opts?: { header?: string | null; footer?: string | null; logoUrl?: string | null }
-): Promise<Uint8Array> {
-	const parts: Uint8Array[] = [];
+const DOUBLE = (on: boolean) => cmd(GS, 0x21, on ? 0x11 : 0x00);
+
+/** Encodes a receipt document for an ESC/POS printer. */
+async function encodeDoc(lines: ReceiptLine[], o: ReceiptOptions): Promise<Uint8Array> {
+	const width = paperChars(o);
+	const parts: Uint8Array[] = [INIT()];
 	const p = (...a: Uint8Array[]) => parts.push(...a);
 
-	p(INIT());
-
-	// Optional logo (raster bitmap, centered)
-	if (opts?.logoUrl) {
-		const logoBytes = await logoToRasterBytes(opts.logoUrl);
-		if (logoBytes) {
-			p(ALIGN(1), logoBytes, NL());
+	for (const line of lines) {
+		if (line.t === 'logo') {
+			const bytes = await logoToRasterBytes(line.url, paperPx(o.paper));
+			if (bytes) p(ALIGN(1), bytes, NL(), ALIGN(0));
+		} else if (line.t === 'rule') {
+			p(ALIGN(0), txt('-'.repeat(width) + '\n'));
+		} else if (line.t === 'text') {
+			const w = line.big ? Math.floor(width / 2) : width - (line.indent ? 2 : 0);
+			p(ALIGN(line.align === 'center' ? 1 : 0), BOLD(!!line.bold), DOUBLE(!!line.big));
+			for (const l of wrapText(line.text, w)) p(txt((line.indent ? '  ' : '') + l + '\n'));
+			p(DOUBLE(false), BOLD(false), ALIGN(0));
+		} else {
+			const w = line.big ? Math.floor(width / 2) : width;
+			p(ALIGN(0), BOLD(!!line.bold), DOUBLE(!!line.big), txt(padLine(line.left, line.right, w) + '\n'), DOUBLE(false), BOLD(false));
 		}
 	}
-
-	// Store name, date, order#
-	p(ALIGN(1), BOLD(true), txt(storeName + '\n'), BOLD(false));
-	p(txt(formatDateTime(order.created_at) + '\n'));
-	p(txt('#' + (order.order_number ?? order.id.slice(0, 8)) + '\n'));
-
-	// Optional receipt header
-	if (opts?.header?.trim()) {
-		for (const line of opts.header.split('\n')) {
-			p(txt(line + '\n'));
-		}
-	}
-
-	p(ALIGN(0), sep());
-
-	// Items
-	for (const item of order.items ?? []) {
-		const label = `${item.item_name_snapshot} x${item.quantity}`;
-		const price = formatRupiah(item.line_total ?? 0);
-		p(txt(padLine(label, price) + '\n'));
-
-		const mods = [snapshotLabel(item.options_snapshot), snapshotLabel(item.addons_snapshot)]
-			.filter(Boolean)
-			.join(', ');
-		if (mods) p(txt('  ' + mods + '\n'));
-
-		if ((item.item_discount_amount ?? 0) > 0) {
-			p(txt('  -' + formatRupiah(item.item_discount_amount!) + ' diskon\n'));
-		}
-	}
-
-	p(sep());
-
-	// Totals
-	const itemDiscTotal = (order.items ?? []).reduce((s, i) => s + (i.item_discount_amount ?? 0), 0);
-	const hasDiscount =
-		(order.discount_amount ?? 0) > 0 || itemDiscTotal > 0 || (order.service_amount ?? 0) > 0 || (order.pb1_amount ?? 0) > 0;
-
-	if (hasDiscount) {
-		p(txt(padLine('Subtotal', formatRupiah(order.subtotal ?? 0)) + '\n'));
-	}
-	if (itemDiscTotal > 0) {
-		p(txt(padLine('Item Discounts', '-' + formatRupiah(itemDiscTotal)) + '\n'));
-	}
-	if ((order.discount_amount ?? 0) > 0) {
-		const label = order.discount_code_snapshot
-			? `Diskon (${order.discount_code_snapshot})`
-			: 'Diskon';
-		p(txt(padLine(label, '-' + formatRupiah(order.discount_amount!)) + '\n'));
-	}
-
-	if ((order.service_amount ?? 0) > 0) p(txt(padLine('Layanan', formatRupiah(order.service_amount!)) + '\n'));
-	if ((order.pb1_amount ?? 0) > 0) p(txt(padLine('PB1', formatRupiah(order.pb1_amount!)) + '\n'));
-
-	p(BOLD(true), txt(padLine('TOTAL', formatRupiah(order.total_amount)) + '\n'), BOLD(false));
-	p(txt(padLine('Pembayaran', order.payment_method) + '\n'));
-
-	if (cashPaid > 0) {
-		p(txt(padLine('Tunai', formatRupiah(cashPaid)) + '\n'));
-		p(txt(padLine('Kembali', formatRupiah(cashPaid - order.total_amount)) + '\n'));
-	}
-
-	p(sep());
-
-	// Optional receipt footer, then thanks line
-	if (opts?.footer?.trim()) {
-		p(ALIGN(1));
-		for (const line of opts.footer.split('\n')) {
-			p(txt(line + '\n'));
-		}
-		p(ALIGN(0));
-	} else {
-		p(ALIGN(1), txt('Terima kasih!\n'), ALIGN(0));
-	}
-
 	p(FEED(3), CUT());
-
 	return concat(...parts);
 }
 
-/** Kitchen ticket: big quantities and modifiers only, no prices. */
-export function buildKitchenTicketBytes(order: Order, storeName: string, where: string): Uint8Array {
-	const parts: Uint8Array[] = [];
-	const p = (...a: Uint8Array[]) => parts.push(...a);
-	const DOUBLE = (on: boolean) => cmd(GS, 0x21, on ? 0x11 : 0x00);
+type StoreForPrint = Pick<
+	Store,
+	'name' | 'logo_url' | 'show_logo' | 'address' | 'phone' | 'receipt_header' | 'receipt_footer' | 'receipt_options'
+>;
 
-	p(INIT(), ALIGN(1), BOLD(true), txt('TIKET DAPUR\n'), BOLD(false), txt(storeName + '\n'));
-	p(DOUBLE(true), txt('#' + (order.order_number ?? order.id.slice(0, 8)) + '\n'), DOUBLE(false));
-	p(txt(formatDateTime(order.created_at) + '\n'), ALIGN(0), sep());
-	p(BOLD(true), txt(where + '\n'), BOLD(false));
-	if (order.customer_name) p(txt(order.customer_name + '\n'));
-	p(sep());
+/** Customer receipt. `cashPaid` is only a fallback for orders that did not store the cash received. */
+export function buildReceiptBytes(order: Order, store: StoreForPrint, cashPaid = 0): Promise<Uint8Array> {
+	const o = receiptOptions(store);
+	return encodeDoc(customerReceipt(order, store, o, cashPaid), o);
+}
 
-	for (const item of order.items ?? []) {
-		const left = item.quantity - (item.void_qty ?? 0);
-		if (left <= 0) continue;
-		p(BOLD(true), txt(`${left}x ${item.item_name_snapshot}\n`), BOLD(false));
-		const mods = [snapshotLabel(item.options_snapshot), snapshotLabel(item.addons_snapshot)]
-			.filter(Boolean)
-			.join(', ');
-		if (mods) p(txt('   ' + mods + '\n'));
-	}
-
-	if (order.notes?.trim()) p(sep(), txt('Catatan: ' + order.notes.trim() + '\n'));
-	p(FEED(3), CUT());
-	return concat(...parts);
+/** Kitchen ticket: big order number, quantities and modifiers, no prices. */
+export function buildKitchenTicketBytes(order: Order, store: StoreForPrint): Promise<Uint8Array> {
+	const o = receiptOptions(store);
+	return encodeDoc(kitchenTicket(order, store, o), o);
 }

@@ -74,6 +74,7 @@ class Order(Base, TimestampMixin):
     driver_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     service_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # dine-in service charge, in total_amount
     pb1_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # restaurant tax added on top, in total_amount
+    cash_received: Mapped[int | None] = mapped_column(Integer, nullable=True)  # cash handed over, for the change line on receipts
     refunded_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     expected_payout_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     settlement_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -84,7 +85,7 @@ class Order(Base, TimestampMixin):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     store: Mapped["Store"] = relationship(back_populates="orders")
-    operator: Mapped["User"] = relationship()
+    operator: Mapped["User | None"] = relationship(lazy="joined")
     discount: Mapped["Discount | None"] = relationship()
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
@@ -92,3 +93,7 @@ class Order(Base, TimestampMixin):
     refunds: Mapped[list["OrderRefund"]] = relationship(
         order_by="OrderRefund.refunded_at", lazy="selectin", cascade="all, delete-orphan"
     )
+
+    @property
+    def operator_name(self) -> str | None:
+        return self.operator.full_name if self.operator else None

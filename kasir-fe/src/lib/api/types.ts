@@ -34,11 +34,16 @@ export type Store = {
   show_logo?: boolean;
   receipt_header?: string | null;
   receipt_footer?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  receipt_options?: Partial<import('$lib/utils/receipt').ReceiptOptions> | null;
   pos_dine_in_enabled?: boolean;
   pos_table_enabled?: boolean;
   pos_table_count?: number;
   pos_customer_name_enabled?: boolean;
   kitchen_enabled?: boolean;
+  inventory_enabled?: boolean;
+  finance_enabled?: boolean;
   tax_bp?: number;
   service_bp?: number;
   pb1_bp?: number;
@@ -168,7 +173,9 @@ export type Order = {
   refunded_amount?: number;
   refunds?: OrderRefund[];
   created_at?: string;
-  staff_name?: string | null;
+  operator_name?: string | null;
+  /** cash handed over by the customer (cash orders), for the change line */
+  cash_received?: number | null;
   items?: Array<{
     id: string;
     item_id?: string | null;

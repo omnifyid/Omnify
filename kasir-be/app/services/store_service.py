@@ -106,8 +106,9 @@ async def get_store(store_id: uuid.UUID, db: AsyncSession) -> Store:
 
 async def update_store(store_id: uuid.UUID, data: dict, db: AsyncSession) -> Store:
     store = await get_store(store_id, db)
+    clearable = {"receipt_header", "receipt_footer", "address", "phone"}  # sending null empties these
     for key, value in data.items():
-        if value is not None:
+        if value is not None or key in clearable:
             setattr(store, key, value)
     await db.commit()
     await db.refresh(store)

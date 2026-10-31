@@ -6,21 +6,32 @@
   import type { ChannelSetting } from '$lib/api/types';
   import { formatDigits, parseAmount } from '$lib/utils/finance';
   import { formatRupiah } from '$lib/utils/format';
-  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
+  import { SEG_GROUP, seg } from '$lib/utils/ui';
+  import ReceiptView from '$lib/components/ReceiptView.svelte';
+  import { customerReceipt, kitchenTicket, paperChars, RECEIPT_DEFAULTS, receiptOptions, sampleOrder, type ReceiptOptions } from '$lib/utils/receipt';
+  import type { MessageKey } from '$lib/i18n/messages';
 
   // ── Form state ────────────────────────────────────────────
   let storeName = $state('');
   let showLogo = $state(true);
   let receiptHeader = $state('');
   let receiptFooter = $state('');
+  let address = $state('');
+  let phone = $state('');
+  // what the customer receipt and kitchen ticket print; saved with the Nota tab
+  let rc = $state<ReceiptOptions>({ ...RECEIPT_DEFAULTS });
+  let previewTab = $state<'customer' | 'kitchen'>('customer');
 
   // ── POS settings ──────────────────────────────────────────
   let posDineIn = $state(false);
-  let posTable = $state(false);
-  let posTableCount = $state(10);
+    let posTableCount = $state(10);
   let posCustomerName = $state(false);
-  let kitchenEnabled = $state(false);
+  // module switches save immediately (tab Modul); selforder = accepting QR orders now
+  let mods = $state({ selforder: false, tables: false, kitchen: false, inventory: true, finance: true });
+  let moduleBusy = $state(false);
+  let moduleNotice = $state('');
 
   // ── Online platforms (Owner only) ─────────────────────────
   type ChannelForm = { channel: ChannelSetting['channel']; enabled: boolean; commission: string; markup: string; lag: string };
@@ -65,6 +76,63 @@
     } catch { channelForms = []; }
   }
 
+
+  // ── Tabs (like new-ui) ────────────────────────────────────
+  type Tab = 'modules' | 'store' | 'receipt' | 'pos' | 'channels' | 'policy';
+  let tabs = $derived<[Tab, MessageKey][]>([
+    ['modules', 'settingsTabModules'],
+    ['store', 'settingsTabStore'],
+    ['receipt', 'settingsTabReceipt'],
+    ['pos', 'settingsTabPos'],
+    ...(isOwner && channelForms.length ? ([['channels', 'settingsTabChannels']] as [Tab, MessageKey][]) : []),
+    ...(isOwner ? ([['policy', 'settingsTabPolicy']] as [Tab, MessageKey][]) : [])
+  ]);
+  let tab = $derived<Tab>((() => {
+    const t = $page.url.searchParams.get('tab') as Tab | null;
+    return t && tabs.some(([k]) => k === t) ? t : 'modules';
+  })());
+  function setTab(next: Tab) {
+    goto(next === 'modules' ? '/settings' : `/settings?tab=${next}`, { replaceState: true, noScroll: true, keepFocus: true });
+  }
+  let hasPreview = $derived(tab === 'receipt');
+
+  // ── Modules ───────────────────────────────────────────────
+  type ModKey = keyof typeof mods;
+  let modules = $derived<{ key: ModKey; icon: string; name: MessageKey; desc: MessageKey; locked?: MessageKey }[]>([
+    {
+      key: 'selforder', icon: 'qr_code_2', name: 'modSelfOrder', desc: 'modSelfOrderDesc',
+      locked: !session.selectedStore?.self_order_enabled ? 'modLockedAdmin' : !isOwner ? 'modOwnerOnly' : undefined
+    },
+    { key: 'tables', icon: 'table_restaurant', name: 'modTables', desc: 'modTablesDesc' },
+    { key: 'kitchen', icon: 'coffee_maker', name: 'kitchenManagement', desc: 'kitchenManagementDesc' },
+    { key: 'inventory', icon: 'inventory_2', name: 'inventory', desc: 'modInventoryDesc' },
+    { key: 'finance', icon: 'account_balance_wallet', name: 'finance', desc: 'modFinanceDesc' }
+  ]);
+  let modulesOn = $derived(modules.filter((m) => !m.locked && mods[m.key]).length);
+
+  async function setModule(key: ModKey, value: boolean) {
+    const storeId = session.selectedStore?.id;
+    if (!storeId) return;
+    moduleBusy = true;
+    saveError = '';
+    moduleNotice = '';
+    try {
+      if (key === 'selforder') await api.patch(`/stores/${storeId}/selforder`, { is_open: value });
+      else {
+        const field = { tables: 'pos_table_enabled', kitchen: 'kitchen_enabled', inventory: 'inventory_enabled', finance: 'finance_enabled' }[key];
+        await api.patch(`/stores/${storeId}`, { [field]: value });
+      }
+      await session.loadStores();
+      moduleNotice = language.t('modSaved');
+      setTimeout(() => (moduleNotice = ''), 3000);
+    } catch (err) {
+      mods[key] = !value;
+      saveError = err instanceof Error ? err.message : 'Save failed';
+    } finally {
+      moduleBusy = false;
+    }
+  }
+
   // ── Logo upload ───────────────────────────────────────────
   let logoUrl = $state<string | null>(null);
   let logoPreviewUrl = $state<string | null>(null);
@@ -77,7 +145,7 @@
   let saveSuccess = $state('');
 
   // ── Char-count helpers ────────────────────────────────────
-  const THERMAL_WIDTH = 32;
+  let THERMAL_WIDTH = $derived(paperChars(rc));
 
   function lineWidths(text: string): number[] {
     return text.split('\n').map((l) => l.length);
@@ -96,13 +164,19 @@
     showLogo = s.show_logo !== false;
     receiptHeader = s.receipt_header ?? '';
     receiptFooter = s.receipt_footer ?? '';
+    address = s.address ?? '';
+    phone = s.phone ?? '';
+    rc = receiptOptions(s);
     logoUrl = s.logo_url ?? null;
     logoPreviewUrl = null;
     posDineIn = s.pos_dine_in_enabled ?? false;
-    posTable = s.pos_table_enabled ?? false;
+    mods.tables = s.pos_table_enabled ?? false;
     posTableCount = s.pos_table_count ?? 10;
     posCustomerName = s.pos_customer_name_enabled ?? false;
-    kitchenEnabled = s.kitchen_enabled ?? false;
+    mods.kitchen = s.kitchen_enabled ?? false;
+    mods.inventory = s.inventory_enabled !== false;
+    mods.finance = s.finance_enabled !== false;
+    mods.selforder = s.selforder_is_open !== false;
     taxPct = pctText(s.tax_bp ?? 0);
     servicePct = pctText(s.service_bp ?? 0);
     pb1Pct = pctText(s.pb1_bp ?? 0);
@@ -111,10 +185,10 @@
     void loadChannels();
   }
 
-  onMount(() => {
+  // wait for the store list before judging the role (direct URL loads start with no store)
+  $effect(() => {
     const role = session.selectedStore?.role;
-    if (role !== 'OWNER' && role !== 'MANAGER') { goto('/dashboard'); return; }
-    initFromStore();
+    if (session.selectedStore && role !== 'OWNER' && role !== 'MANAGER') void goto('/dashboard');
   });
 
   let lastStoreId = $state('');
@@ -173,11 +247,16 @@
         show_logo: showLogo,
         receipt_header: receiptHeader || null,
         receipt_footer: receiptFooter || null,
+        address: address.trim() || null,
+        phone: phone.trim() || null,
+        receipt_options: { ...rc, k_title: rc.k_title.trim() || RECEIPT_DEFAULTS.k_title },
         pos_dine_in_enabled: posDineIn,
-        pos_table_enabled: posTable,
+        pos_table_enabled: mods.tables,
         pos_table_count: posTableCount,
         pos_customer_name_enabled: posCustomerName,
-        kitchen_enabled: kitchenEnabled,
+        kitchen_enabled: mods.kitchen,
+        inventory_enabled: mods.inventory,
+        finance_enabled: mods.finance,
         ...(isOwner ? { tax_bp: toBp(taxPct), service_bp: toBp(servicePct), pb1_bp: toBp(pb1Pct), shift_variance_threshold: parseAmount(shiftThreshold), default_float: parseAmount(defaultFloat) } : {}),
       });
       if (isOwner) {
@@ -211,13 +290,21 @@
         : null
   );
 
-  // ── Sample data for receipt preview ──────────────────────
-  const SAMPLE_ITEMS = [
-    { name: 'Kopi Susu', qty: 1, price: 30000 },
-    { name: 'Americano', qty: 2, price: 20000 },
-  ];
-  const SAMPLE_CUSTOMER = 'Budi Santoso';
-  const SAMPLE_TABLE = '5';
+  // ── Live preview: a sample order with the form values ────
+  let previewStore = $derived({
+    name: storeName || language.t('storeName'),
+    logo_url: displayLogoUrl,
+    show_logo: showLogo,
+    address,
+    phone,
+    receipt_header: receiptHeader,
+    receipt_footer: receiptFooter,
+    receipt_options: rc
+  });
+  let previewLines = $derived(
+    previewTab === 'kitchen' ? kitchenTicket(sampleOrder(), previewStore, rc) : customerReceipt(sampleOrder(), previewStore, rc)
+  );
+
 </script>
 
 <svelte:head><title>{language.t('settings')} | Kasir</title></svelte:head>
@@ -227,10 +314,46 @@
   <p class="mt-1 text-[var(--text-muted)]">{language.t('settingsSubtitle')}</p>
 </div>
 
-<div class="settings-layout">
+<div class="settings-layout" class:single={!hasPreview}>
   <!-- ── Form column ───────────────────────────────────────── -->
   <div class="form-col">
 
+    <div class="{SEG_GROUP} mb-6" role="tablist" aria-label={language.t('settings')}>
+      {#each tabs as [key, label] (key)}
+        <button role="tab" aria-selected={tab === key} class="{seg(tab === key)} !px-4" style="min-height: var(--om-tap)" onclick={() => setTab(key)}>{language.t(label)}</button>
+      {/each}
+    </div>
+
+    {#if tab === 'modules'}
+    <!-- ── Modules ─────────────────────────────────────────── -->
+    <div class="mb-8">
+      <div class="mb-4 flex flex-col gap-1">
+        <span class="text-[16px] font-semibold">{language.t('modulesActive')} · {modulesOn}/{modules.length}</span>
+        <span class="text-[var(--om-text-secondary)]">{language.t('modulesHint')}</span>
+      </div>
+      {#if moduleNotice}
+        <div class="mb-4 rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-700" role="status">{moduleNotice}</div>
+      {/if}
+      {#if saveError}
+        <div class="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>
+      {/if}
+      <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr))">
+        {#each modules as m (m.key)}
+          {@const on = mods[m.key] && !m.locked}
+          <div class="flex items-center gap-4 rounded-[14px] border-[1.5px] bg-white p-4 {on ? 'border-[var(--om-brand)]' : 'border-[var(--om-border)]'}">
+            <div class="grid h-11 w-11 shrink-0 place-items-center rounded-xl {on ? 'bg-[var(--om-brand-tint)] text-[var(--om-brand)]' : 'bg-[var(--om-fill-muted)] text-[var(--om-text-secondary)]'}"><span class="ms" aria-hidden="true">{m.icon}</span></div>
+            <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span class="font-semibold">{language.t(m.name)}</span>
+              <span class="text-xs leading-snug text-[var(--om-text-secondary)]">{language.t(m.desc)}</span>
+              <span class="text-xs {on ? 'text-[var(--om-brand)]' : 'text-[var(--om-text-secondary)]'}">{m.locked ? language.t(m.locked) : on ? language.t('modOn') : language.t('modOff')}</span>
+            </div>
+            <Toggle bind:checked={mods[m.key]} disabled={moduleBusy || !!m.locked} label={language.t(m.name)} onchange={(v) => setModule(m.key, v)} />
+          </div>
+        {/each}
+      </div>
+    </div>
+
+    {:else if tab === 'store'}
     <!-- ── Store ──────────────────────────────────────────── -->
     <div class="mb-8">
       <p class="section-label">{language.t('store')}</p>
@@ -239,6 +362,16 @@
         <label for="store-name" class="block mb-5">
           <span class="field-label">{language.t('storeName')}</span>
           <input id="store-name" class="field mt-1" bind:value={storeName} />
+        </label>
+
+        <label for="store-address" class="block mb-5">
+          <span class="field-label">{language.t('storeAddress')}</span>
+          <textarea id="store-address" class="field mt-1" rows="2" maxlength="300" bind:value={address}></textarea>
+        </label>
+
+        <label for="store-phone" class="block mb-5">
+          <span class="field-label">{language.t('storePhone')}</span>
+          <input id="store-phone" class="field mt-1 max-w-xs" type="tel" maxlength="30" bind:value={phone} />
         </label>
 
         <div class="border-t border-[var(--border)] mb-5"></div>
@@ -275,84 +408,121 @@
           </div>
         </div>
 
-        <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-[var(--border)] p-3">
-          <Toggle bind:checked={showLogo} />
-          <span class="text-sm font-semibold text-[var(--espresso)]">{language.t('showLogoOnReceipt')}</span>
+
+      </div>
+    </div>
+
+    <!-- ── Branches (Owner) ────────────────────────────────── -->
+    {#if isOwner}
+      <div class="mb-8">
+        <p class="section-label">{language.t('branches')}</p>
+        <div class="card space-y-3 p-5">
+          <p class="text-xs text-[var(--text-muted)]">{language.t('branchesDesc')}</p>
+          <ul class="divide-y divide-[var(--border)]">
+            {#each session.stores as st (st.id)}
+              <li class="flex items-center gap-2 py-2 text-sm font-semibold"><span class="ms !text-[20px] text-[var(--om-brand)]">storefront</span>{st.name}</li>
+            {/each}
+          </ul>
+          {#if branchError}<div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{branchError}</div>{/if}
+          <div class="flex gap-2">
+            <input class="field min-w-0 flex-1" placeholder={language.t('branchName')} bind:value={branchName} onkeydown={(e) => { if (e.key === 'Enter') addBranch(); }} />
+            <button type="button" class="btn-primary shrink-0" disabled={addingBranch || !branchName.trim()} onclick={addBranch}>{language.t('addBranch')}</button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {:else if tab === 'receipt'}
+    {#snippet paperRow()}
+          <div class="flex items-center gap-2.5">
+            <span class="field-label">{language.t('rcPaper')}</span>
+            <div class={SEG_GROUP} role="group" aria-label={language.t('rcPaper')}>
+              {#each ['58', '80'] as w (w)}
+                <button type="button" class="{seg(rc.paper === w)} !px-3 text-sm" style="min-height: 36px" aria-pressed={rc.paper === w} onclick={() => (rc.paper = w as ReceiptOptions['paper'])}>{w} mm</button>
+              {/each}
+            </div>
+          </div>
+    {/snippet}
+
+    <div class="{SEG_GROUP} mb-4 lg:hidden" role="tablist" aria-label={language.t('receipt')}>
+      {#each [['customer', 'rcCustomer'], ['kitchen', 'rcKitchen']] as [key, label] (key)}
+        <button role="tab" aria-selected={previewTab === key} class="{seg(previewTab === key)} !px-4" style="min-height: var(--om-tap)" onclick={() => (previewTab = key as typeof previewTab)}>{language.t(label as MessageKey)}</button>
+      {/each}
+    </div>
+
+    {#if previewTab === 'customer'}
+    <div class="mb-5">
+      <div class="card space-y-4 p-4">
+        <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+          {@render paperRow()}
+          <label class="flex cursor-pointer items-center gap-2">
+            <Toggle compact bind:checked={showLogo} />
+            <span class="text-sm font-semibold text-[var(--espresso)]">{language.t('showLogoOnReceipt')}</span>
+          </label>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="block">
+            <span class="field-label">{language.t('receiptHeader')}</span>
+            <textarea class="field mt-1 font-mono text-sm" rows="3" placeholder={"e.g. Selamat datang!\nWiFi: KopiSenja123"} bind:value={receiptHeader}></textarea>
+            {#if receiptHeader.trim()}
+              <span class="mt-1 block text-xs {headerOverflow ? 'font-semibold text-red-500' : 'text-[var(--text-muted)]'}">
+                {Math.max(...headerLines)}/{THERMAL_WIDTH}{#if headerOverflow} · Lines over {THERMAL_WIDTH} chars may wrap on {rc.paper}mm paper.{/if}
+              </span>
+            {/if}
+          </label>
+          <label class="block">
+            <span class="field-label">{language.t('receiptFooter')}</span>
+            <textarea class="field mt-1 font-mono text-sm" rows="3" placeholder={"e.g. Terima kasih!\nIG: @kopi.senja"} bind:value={receiptFooter}></textarea>
+            {#if receiptFooter.trim()}
+              <span class="mt-1 block text-xs {footerOverflow ? 'font-semibold text-red-500' : 'text-[var(--text-muted)]'}">
+                {Math.max(...footerLines)}/{THERMAL_WIDTH}{#if footerOverflow} · Lines over {THERMAL_WIDTH} chars may wrap on {rc.paper}mm paper.{/if}
+              </span>
+            {/if}
+          </label>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="mb-5">
+      <div class="card grid gap-x-8 px-4 py-1 sm:grid-cols-2">
+        {#each [['show_addr', 'rcShowAddr'], ['show_phone', 'rcShowPhone'], ['show_cashier', 'rcShowCashier'], ['show_cust', 'rcShowCust'], ['show_no', 'rcShowNo'], ['show_mods', 'rcShowMods'], ['show_tax', 'rcShowTax'], ['show_pay', 'rcShowPay']] as [key, label] (key)}
+          <label class="flex cursor-pointer items-center justify-between gap-3 border-b border-[var(--border)] py-2 text-sm">
+            <span class="text-[var(--espresso)]">{language.t(label as MessageKey)}</span>
+            <Toggle compact bind:checked={rc[key as keyof ReceiptOptions] as boolean} />
+          </label>
+        {/each}
+      </div>
+    </div>
+
+
+    {:else}
+    <div class="mb-5">
+      <div class="card p-4">
+        {@render paperRow()}
+      </div>
+    </div>
+
+    <div class="mb-5">
+      <div class="card space-y-2 p-4">
+        <label class="flex flex-wrap items-center gap-3">
+          <span class="field-label">{language.t('rcKitchenTitle')}</span>
+          <input class="field !min-h-0 h-9 max-w-[14rem] !py-0" maxlength="30" bind:value={rc.k_title} />
         </label>
-
+        <div class="grid gap-x-8 sm:grid-cols-2">
+          {#each [['k_outlet', 'rcKOutlet'], ['k_server', 'rcKServer'], ['k_cust', 'rcKCust']] as [key, label] (key)}
+            <label class="flex cursor-pointer items-center justify-between gap-3 border-b border-[var(--border)] py-2 text-sm">
+              <span class="text-[var(--espresso)]">{language.t(label as MessageKey)}</span>
+              <Toggle compact bind:checked={rc[key as keyof ReceiptOptions] as boolean} />
+            </label>
+          {/each}
+        </div>
+        <p class="text-xs text-[var(--text-muted)]">{language.t('rcKitchenNote')}</p>
       </div>
     </div>
-
-    <!-- ── Receipt ─────────────────────────────────────────── -->
-    <div class="mb-8">
-      <p class="section-label">{language.t('receipt')}</p>
-      <div class="card p-5">
-
-        <!-- Header -->
-        <div class="mb-5">
-          <span class="field-label">{language.t('receiptHeader')}</span>
-          <textarea
-            class="field font-mono text-sm mt-1"
-            rows="3"
-            placeholder={"e.g. Selamat datang!\nWiFi: KopiSenja123"}
-            bind:value={receiptHeader}
-          ></textarea>
-          {#if receiptHeader.trim()}
-            <div class="mt-2 space-y-0.5">
-              {#each headerLines as len, i}
-                <div class="flex items-center gap-2 text-xs">
-                  <span class="w-14 text-[var(--text-muted)]">Line {i + 1}:</span>
-                  <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--cream)]">
-                    <div
-                      class="h-full rounded-full transition-all {len > THERMAL_WIDTH ? 'bg-red-400' : 'bg-green-400'}"
-                      style="width: {Math.min(100, (len / THERMAL_WIDTH) * 100)}%"
-                    ></div>
-                  </div>
-                  <span class="{len > THERMAL_WIDTH ? 'text-red-500 font-bold' : 'text-[var(--text-muted)]'}">{len}/{THERMAL_WIDTH}</span>
-                </div>
-              {/each}
-              {#if headerOverflow}
-                <p class="text-xs font-semibold text-red-500">Lines over 32 chars may wrap on 58mm paper.</p>
-              {/if}
-            </div>
-          {/if}
-        </div>
-
-        <div class="border-t border-[var(--border)] mb-5"></div>
-
-        <!-- Footer -->
-        <div>
-          <span class="field-label">{language.t('receiptFooter')}</span>
-          <textarea
-            class="field font-mono text-sm mt-1"
-            rows="3"
-            placeholder={"e.g. Terima kasih!\nIG: @kopi.senja"}
-            bind:value={receiptFooter}
-          ></textarea>
-          {#if receiptFooter.trim()}
-            <div class="mt-2 space-y-0.5">
-              {#each footerLines as len, i}
-                <div class="flex items-center gap-2 text-xs">
-                  <span class="w-14 text-[var(--text-muted)]">Line {i + 1}:</span>
-                  <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--cream)]">
-                    <div
-                      class="h-full rounded-full transition-all {len > THERMAL_WIDTH ? 'bg-red-400' : 'bg-green-400'}"
-                      style="width: {Math.min(100, (len / THERMAL_WIDTH) * 100)}%"
-                    ></div>
-                  </div>
-                  <span class="{len > THERMAL_WIDTH ? 'text-red-500 font-bold' : 'text-[var(--text-muted)]'}">{len}/{THERMAL_WIDTH}</span>
-                </div>
-              {/each}
-              {#if footerOverflow}
-                <p class="text-xs font-semibold text-red-500">Lines over 32 chars may wrap on 58mm paper.</p>
-              {/if}
-            </div>
-          {/if}
-        </div>
-
-      </div>
-    </div>
-
+    {/if}
+    {:else if tab === 'pos'}
     <!-- ── POS ─────────────────────────────────────────────── -->
     <div class="mb-8">
       <p class="section-label">POS</p>
@@ -366,9 +536,9 @@
         <div class="rounded-xl border border-[var(--border)] p-3">
           <label class="flex cursor-pointer items-center justify-between gap-3">
             <div class="text-sm font-semibold text-[var(--espresso)]">{language.t('tableNumber')}</div>
-            <Toggle bind:checked={posTable} />
+            <Toggle bind:checked={mods.tables} />
           </label>
-          {#if posTable}
+          {#if mods.tables}
             <div class="mt-3">
               <label class="block">
                 <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('tableCount')}</span>
@@ -386,20 +556,25 @@
       </div>
     </div>
 
-    <!-- ── Kitchen ─────────────────────────────────────────── -->
-    <div class="mb-8">
-      <p class="section-label">{language.t('kitchen')}</p>
-      <div class="card p-5">
-        <label class="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-[var(--border)] p-3">
-          <div>
-            <div class="text-sm font-semibold text-[var(--espresso)]">{language.t('kitchenManagement')}</div>
-            <div class="text-xs text-[var(--text-muted)]">{language.t('kitchenManagementDesc')}</div>
-          </div>
-          <Toggle bind:checked={kitchenEnabled} />
-        </label>
+    <!-- ── Service charge & PB1 (Owner) ────────────────────── -->
+    {#if isOwner}
+      <div class="mb-8">
+        <p class="section-label">{language.t('serviceLabel')} & {language.t('pb1Label')}</p>
+        <div class="card grid gap-3 p-5 sm:grid-cols-2">
+          <label class="block">
+            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('settingsServicePct')}</span>
+            <input class="field" inputmode="decimal" placeholder="0" bind:value={servicePct} />
+          </label>
+          <label class="block">
+            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('settingsPb1Pct')}</span>
+            <input class="field" inputmode="decimal" placeholder="0" bind:value={pb1Pct} />
+          </label>
+          <p class="text-xs text-[var(--text-muted)] sm:col-span-2">{language.t('settingsFeesHint')}</p>
+        </div>
       </div>
-    </div>
+    {/if}
 
+    {:else if tab === 'channels'}
     <!-- ── Online platforms (Owner) ────────────────────────── -->
     {#if isOwner && channelForms.length}
       <div class="mb-8">
@@ -439,24 +614,7 @@
       </div>
     {/if}
 
-    <!-- ── Service charge & PB1 (Owner) ────────────────────── -->
-    {#if isOwner}
-      <div class="mb-8">
-        <p class="section-label">{language.t('serviceLabel')} & {language.t('pb1Label')}</p>
-        <div class="card grid gap-3 p-5 sm:grid-cols-2">
-          <label class="block">
-            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('settingsServicePct')}</span>
-            <input class="field" inputmode="decimal" placeholder="0" bind:value={servicePct} />
-          </label>
-          <label class="block">
-            <span class="mb-0.5 block text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('settingsPb1Pct')}</span>
-            <input class="field" inputmode="decimal" placeholder="0" bind:value={pb1Pct} />
-          </label>
-          <p class="text-xs text-[var(--text-muted)] sm:col-span-2">{language.t('settingsFeesHint')}</p>
-        </div>
-      </div>
-    {/if}
-
+    {:else if tab === 'policy'}
     <!-- ── Shift & cash (Owner) ────────────────────────────── -->
     {#if isOwner}
       <div class="mb-8">
@@ -475,26 +633,9 @@
       </div>
     {/if}
 
-    <!-- ── Branches (Owner) ────────────────────────────────── -->
-    {#if isOwner}
-      <div class="mb-8">
-        <p class="section-label">{language.t('branches')}</p>
-        <div class="card space-y-3 p-5">
-          <p class="text-xs text-[var(--text-muted)]">{language.t('branchesDesc')}</p>
-          <ul class="divide-y divide-[var(--border)]">
-            {#each session.stores as st (st.id)}
-              <li class="flex items-center gap-2 py-2 text-sm font-semibold"><span class="ms !text-[20px] text-[var(--om-brand)]">storefront</span>{st.name}</li>
-            {/each}
-          </ul>
-          {#if branchError}<div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{branchError}</div>{/if}
-          <div class="flex gap-2">
-            <input class="field min-w-0 flex-1" placeholder={language.t('branchName')} bind:value={branchName} onkeydown={(e) => { if (e.key === 'Enter') addBranch(); }} />
-            <button type="button" class="btn-primary shrink-0" disabled={addingBranch || !branchName.trim()} onclick={addBranch}>{language.t('addBranch')}</button>
-          </div>
-        </div>
-      </div>
     {/if}
 
+    {#if tab !== 'modules'}
     <!-- ── Save ────────────────────────────────────────────── -->
     {#if saveError}
       <div class="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>
@@ -506,86 +647,24 @@
       {saving ? language.t('saving') : language.t('saveChanges')}
     </button>
 
+    {/if}
   </div>
 
   <!-- ── Preview column ────────────────────────────────────── -->
+  {#if hasPreview}
   <div class="preview-col">
     <div class="preview-sticky">
-      <p class="mb-3 text-[11px] font-bold uppercase tracking-widest text-[var(--text-muted)]">{language.t('livePreview')}</p>
-
-      <div class="receipt-preview">
-        <!-- Logo -->
-        {#if showLogo && displayLogoUrl}
-          <img src={displayLogoUrl} alt="logo" class="preview-logo" />
-        {/if}
-
-        <!-- Store name + order meta -->
-        <div class="preview-store">{storeName || language.t('storeName')}</div>
-        <div class="preview-meta">19 May 2026 · 10:30</div>
-        <div class="preview-meta">#0001</div>
-
-        <!-- POS info block — shown only when a POS option is enabled -->
-        {#if posCustomerName || posDineIn || posTable}
-          <div class="preview-pos-block">
-            {#if posCustomerName}
-              <div class="preview-pos-row">
-                <span>{language.t('customerName')}</span>
-                <span>{SAMPLE_CUSTOMER}</span>
-              </div>
-            {/if}
-            {#if posDineIn}
-              <div class="preview-pos-row">
-                <span>{language.t('serviceOption')}</span>
-                <span>{language.t('dineIn')}</span>
-              </div>
-            {/if}
-            {#if posTable}
-              <div class="preview-pos-row">
-                <span>{language.t('table')}</span>
-                <span>{SAMPLE_TABLE}</span>
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- Receipt header text -->
-        {#if receiptHeader.trim()}
-          <div class="preview-header-text">{receiptHeader}</div>
-        {/if}
-
-        <div class="preview-sep">— — — — — — — — — — — —</div>
-
-        <!-- Items -->
-        {#each SAMPLE_ITEMS as item}
-          <div class="preview-item-row">
-            <span>{item.name} ×{item.qty}</span>
-            <span>{formatRupiah(item.price * item.qty)}</span>
-          </div>
+      <div class="{SEG_GROUP} mb-3 hidden lg:flex" role="tablist" aria-label={language.t('livePreview')}>
+        {#each [['customer', 'rcCustomer'], ['kitchen', 'rcKitchen']] as [key, label] (key)}
+          <button role="tab" aria-selected={previewTab === key} class="{seg(previewTab === key)} !px-4" style="min-height: var(--om-tap)" onclick={() => (previewTab = key as typeof previewTab)}>{language.t(label as MessageKey)}</button>
         {/each}
-
-        <div class="preview-sep">— — — — — — — — — — — —</div>
-
-        <!-- Totals -->
-        <div class="preview-total-row preview-grand">
-          <span>Total</span>
-          <span>{formatRupiah(SAMPLE_ITEMS.reduce((s, i) => s + i.price * i.qty, 0))}</span>
-        </div>
-        <div class="preview-total-row">
-          <span>{language.t('payment')}</span>
-          <span class="font-bold">CASH</span>
-        </div>
-
-        <div class="preview-sep">— — — — — — — — — — — —</div>
-
-        <!-- Footer -->
-        {#if receiptFooter.trim()}
-          <div class="preview-footer-text">{receiptFooter}</div>
-        {:else}
-          <div class="preview-thanks">Terima kasih! ☕</div>
-        {/if}
+      </div>
+      <div class="preview-paper">
+        <ReceiptView lines={previewLines} paper={rc.paper} />
       </div>
     </div>
   </div>
+  {/if}
 </div>
 
 <style>
@@ -598,8 +677,9 @@
     .settings-layout { grid-template-columns: 1fr 300px; }
   }
 
+  .settings-layout.single { grid-template-columns: minmax(0, 920px); }
   .form-col { min-width: 0; }
-  .preview-col { min-width: 0; }
+  .preview-col { min-width: 0; align-self: stretch; } /* full height so the preview can stick while scrolling */
 
   .preview-sticky {
     position: sticky;
@@ -652,108 +732,11 @@
   }
 
   /* ── Receipt preview ──────────────────────────────────── */
-  .receipt-preview {
-    width: 100%;
-    max-width: 280px;
-    margin: 0 auto;
-    background: white;
-    border-radius: 16px;
-    border: 1.5px solid var(--border);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-    padding: 20px 16px;
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 12px;
-    color: #1a1a1a;
-    line-height: 1.5;
-  }
-
-  .preview-logo {
-    display: block;
-    max-height: 52px;
-    max-width: 120px;
-    object-fit: contain;
-    margin: 0 auto 10px;
-  }
-
-  .preview-store {
-    text-align: center;
-    font-weight: 800;
-    font-size: 13px;
-    color: var(--espresso);
-    margin-bottom: 2px;
-  }
-
-  .preview-meta {
-    text-align: center;
-    color: #888;
-    font-size: 11px;
-  }
-
-  .preview-pos-block {
-    margin: 7px 0 2px;
-    padding: 5px 0;
-    border-top: 1px dashed #ddd;
-    border-bottom: 1px dashed #ddd;
-  }
-
-  .preview-pos-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 10.5px;
-    color: #555;
-    padding: 1.5px 0;
-  }
-
-  .preview-header-text {
-    text-align: center;
-    margin-top: 8px;
-    font-size: 11px;
-    color: #555;
-    white-space: pre-line;
-  }
-
-  .preview-sep {
-    text-align: center;
-    color: #ccc;
-    margin: 8px 0;
-    font-size: 11px;
-    letter-spacing: 0.05em;
-  }
-
-  .preview-item-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 11.5px;
-    padding: 1px 0;
-  }
-
-  .preview-total-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 11.5px;
-    color: #555;
-    padding: 1px 0;
-  }
-
-  .preview-grand {
-    font-weight: 800;
-    font-size: 13px;
-    color: var(--espresso);
-    padding: 4px 0;
-  }
-
-  .preview-footer-text {
-    text-align: center;
-    font-size: 11px;
-    color: #555;
-    white-space: pre-line;
-    margin-top: 4px;
-  }
-
-  .preview-thanks {
-    text-align: center;
-    font-size: 11px;
-    color: #888;
-    margin-top: 4px;
+  .preview-paper {
+    background: #fff;
+    border: 1px solid var(--om-border);
+    border-radius: 14px;
+    padding: 16px 12px;
+    overflow-x: auto;
   }
 </style>

@@ -50,11 +50,13 @@ Receipts must be immutable — changing item price later must not affect past or
 
 ## Receipt Printing
 
+What the customer receipt and kitchen ticket show, and the paper width, are store settings, see [prd-settings.md](prd-settings.md). The browser print and Bluetooth paths below render the same document.
+
 Two print paths, both triggered from the receipt modal after checkout:
 
 | Button | Mechanism | Works in |
 |--------|-----------|----------|
-| **Print Struk** | `window.print()` + CSS `@media print` (58mm, `size: 58mm auto`) | All browsers |
+| **Print Struk** | `window.print()` + CSS `@media print` (page width from the paper setting, 58 or 80 mm) | All browsers |
 | **Bluetooth** | Web Bluetooth API → ESC/POS bytes → GATT write | Chrome only (HTTPS or localhost required) |
 
 **Bluetooth implementation:**

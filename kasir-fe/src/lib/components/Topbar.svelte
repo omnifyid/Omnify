@@ -44,7 +44,7 @@
       <span>{dateLabel}</span><span class="text-[var(--om-text-secondary)]">·</span><span>{timeLabel}</span>
     </div>
 
-    <ShiftChip />
+    {#if session.selectedStore?.finance_enabled !== false}<ShiftChip />{/if}
 
     <div class="xl:hidden"><StoreSwitcher variant="chip" /></div>
 

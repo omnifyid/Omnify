@@ -337,6 +337,12 @@ async def create_order(
             expected_payout = total_amount - commission_amount
             tax_amount = channel_service.included_tax(total_amount, tax_bp)
 
+        cash_received = None
+        if payload.cash_received is not None and payload.payment_method == PaymentMethod.CASH and not channel:
+            if payload.cash_received < total_amount:
+                raise BadRequestError("Cash received is less than the total")
+            cash_received = payload.cash_received
+
         # Write Order
         order = Order(
             store_id=store_id,
@@ -346,6 +352,7 @@ async def create_order(
             subtotal=subtotal,
             discount_amount=discount_amount,
             total_amount=total_amount,
+            cash_received=cash_received,
             service_amount=service_amount,
             pb1_amount=pb1_amount,
             discount_id=discount_obj.id if discount_obj else None,

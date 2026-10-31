@@ -8,12 +8,15 @@ export function visibleGroups(): NavGroup[] {
   const role = session.selectedStore?.role ?? null;
   const selfOrderEnabled = session.selectedStore?.self_order_enabled ?? false;
   const kitchenEnabled = session.selectedStore?.kitchen_enabled ?? false;
+  const inventoryEnabled = session.selectedStore?.inventory_enabled !== false;
+  const financeEnabled = session.selectedStore?.finance_enabled !== false;
   if (!role) return [];
   return navGroups
     .map((g) => ({
       ...g,
       items: g.items.filter((i) => i.roles.includes(role) && (i.href !== '/selforder' || selfOrderEnabled) &&
-          (i.href !== '/kitchen' || kitchenEnabled))
+          (i.href !== '/kitchen' || kitchenEnabled) &&
+          (i.href !== '/inventory' || inventoryEnabled) && (i.href !== '/finance' || financeEnabled))
     }))
     .filter((g) => g.items.length > 0);
 }

@@ -45,3 +45,6 @@ All project knowledge lives in `doc/`. When you add a feature, change the deploy
 
 ## Demo Data
 @doc/demo-data.md
+
+## Settings
+@doc/prd-settings.md

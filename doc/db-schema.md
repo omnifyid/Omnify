@@ -26,8 +26,10 @@ stores
 | `item_categories` | `name`, `icon` (emoji), `business_id` |
 | `items` | `name`, `price` (int, Rupiah), `cost_price` (HPP, nullable int, Rupiah; staff-only, omitted from the public menu), `is_available`, `stock`, `business_id`, `category_id` |
 | `discounts` | See [prd-discounts.md](prd-discounts.md) |
-| `orders` | `status`, `payment_method` (`CASH`/`CARD`/`QRIS`/`TRANSFER`/`PLATFORM`), `channel` (nullable), `subtotal`, `discount_amount`, `total`, `kitchen_status` (nullable), `store_id` |
+| `orders` | `status`, `payment_method` (`CASH`/`CARD`/`QRIS`/`TRANSFER`/`PLATFORM`), `channel` (nullable), `cash_received` (nullable, cash orders), `subtotal`, `discount_amount`, `total`, `kitchen_status` (nullable), `store_id` |
 | `stores.kitchen_enabled` | Opt-in kitchen management, see [prd-kitchen.md](prd-kitchen.md) |
+| `stores.address`, `stores.phone`, `stores.receipt_options` | Shown on receipts, see [prd-settings.md](prd-settings.md) |
+| `stores.inventory_enabled`, `stores.finance_enabled` | Module switches (default true), see [prd-settings.md](prd-settings.md) |
 | `stores.service_bp`, `stores.pb1_bp`, `orders.service_amount`, `orders.pb1_amount` | Dine-in service charge and PB1 on direct orders, see [prd-orders.md](prd-orders.md) |
 | `ingredients`, `recipe_lines`, `stock_movements` | Ingredient stock, product recipes, stock log, see [prd-inventory.md](prd-inventory.md) |
 | `channel_settings`, `item_channel_prices` | Per store + channel: `enabled`, `commission_bp`, `markup_bp`, `payout_lag_days`; per item + channel manual `price`. `stores.tax_bp`; order channel columns, see [prd-channels.md](prd-channels.md) |

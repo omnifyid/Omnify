@@ -3,8 +3,9 @@
     checked = $bindable(false),
     disabled = false,
     label = '',
+    compact = false,
     onchange
-  }: { checked?: boolean; disabled?: boolean; label?: string; onchange?: (value: boolean) => void } = $props();
+  }: { checked?: boolean; disabled?: boolean; label?: string; compact?: boolean; onchange?: (value: boolean) => void } = $props();
 
   function flip(e: MouseEvent) {
     e.stopPropagation();
@@ -22,7 +23,7 @@
   {disabled}
   onclick={flip}
   class="flex shrink-0 items-center justify-center"
-  style="min-width: var(--om-tap); min-height: var(--om-tap)"
+  style={compact ? undefined : "min-width: var(--om-tap); min-height: var(--om-tap)"}
 >
   <span
     class="flex h-6 w-[42px] rounded-xl p-[3px] transition-colors {checked ? 'justify-end bg-[var(--om-brand-bright)]' : 'justify-start bg-[var(--om-border-strong)]'}"

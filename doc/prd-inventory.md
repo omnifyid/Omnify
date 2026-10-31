@@ -17,7 +17,7 @@ Low stock: `stock <= min_stock`. Status chip: **Kritis** under half of `min_stoc
 ## Rules
 
 - Stock changes only through `inventory_service._move`, which logs a movement. Rows are locked `FOR UPDATE` (ordered by id) before changing.
-- `order_service.create_order` calls `deduct_for_order` inside the order savepoint. Stock may go negative; sales are never blocked by ingredient stock. Package lines and items without a recipe deduct nothing.
+- `order_service.create_order` calls `deduct_for_order` inside the order savepoint; it does nothing when `stores.inventory_enabled` is false. Stock may go negative; sales are never blocked by ingredient stock. Package lines and items without a recipe deduct nothing.
 - Cancelling an order (`update_order_status` → `CANCELLED`) calls `restore_for_order`, which reverses the order's `SALE` movements once (a `RETURN` movement marks it done).
 - Stock opname sets stock to the counted value; each non-zero difference is logged as `OPNAME`. Unchanged rows log nothing.
 - Deleting an ingredient cascades to recipe lines and movements.

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.services.item_service import business_of, parent_store_id
-from app.models import Ingredient, Item, MovementType, OrderItem, RecipeLine, StockMovement
+from app.models import Ingredient, Item, Store, MovementType, OrderItem, RecipeLine, StockMovement
 from app.schemas.inventory import (
     IngredientCreate,
     IngredientUpdate,
@@ -273,6 +273,8 @@ async def deduct_for_order(
     store_id: uuid.UUID, order_id: uuid.UUID, order_number: str, lines: list[OrderItem], db: AsyncSession
 ) -> None:
     """Deduct recipe ingredients for a new order. Stock may go negative; sales are never blocked."""
+    if not (await db.execute(select(Store.inventory_enabled).where(Store.id == store_id))).scalar_one():
+        return  # inventory module is off for this store
     qty_by_item: dict[uuid.UUID, int] = defaultdict(int)
     for l in lines:
         if l.item_id:

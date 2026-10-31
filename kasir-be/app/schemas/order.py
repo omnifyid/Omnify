@@ -35,6 +35,7 @@ class OrderCreate(BaseModel):
     channel_order_id: str | None = Field(default=None, max_length=50)
     app_total: int | None = Field(default=None, ge=0)
     driver_name: str | None = Field(default=None, max_length=100)
+    cash_received: int | None = Field(default=None, ge=0)  # cash handed over; must cover the total
 
     @model_validator(mode="after")
     def check_channel(self) -> "OrderCreate":
@@ -110,6 +111,8 @@ class OrderRead(BaseModel):
     service_amount: int = 0
     pb1_amount: int = 0
     refunded_amount: int = 0
+    cash_received: int | None = None
+    operator_name: str | None = None
     refunds: list[RefundRead] = []
     settlement_id: uuid.UUID | None = None
     created_at: datetime

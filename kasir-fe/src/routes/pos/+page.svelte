@@ -11,6 +11,8 @@
   import { getChoiceLabel, getChoicePrice, getGroupChoices, getGroupLabel, hasItemModifiers } from '$lib/utils/modifiers';
   import { printEscPos, canPrint } from '$lib/utils/bluetooth-printer';
   import { buildReceiptBytes } from '$lib/utils/escpos';
+  import ReceiptView from '$lib/components/ReceiptView.svelte';
+  import { customerReceipt, receiptOptions } from '$lib/utils/receipt';
 
   type CartLine = {
     lineId: string;
@@ -145,8 +147,9 @@
 
   let cashAmount = $state('0');
   let cashModalOpen = $state(false);
-  let itemDiscountTotal = $derived(receiptOrder ? (receiptOrder.items ?? []).reduce((sum, i) => sum + (i.item_discount_amount ?? 0), 0) : 0);
   let receiptCashPaid = $state(0);
+  let receiptOpts = $derived(receiptOptions(session.selectedStore));
+  let receiptLines = $derived(receiptOrder && session.selectedStore ? customerReceipt(receiptOrder, session.selectedStore, receiptOpts, receiptCashPaid) : []);
   let cashPaid = $derived(parseInt(cashAmount) || 0);
   let change = $derived(cashPaid - totalDue);
 
@@ -296,20 +299,6 @@
     schedulePromoCheck();
   }
 
-  function snapshotNames(snapshot: unknown[] | null | undefined) {
-    if (!snapshot?.length) return '';
-    return snapshot
-      .map((entry) => {
-        if (typeof entry === 'string') return entry;
-        if (entry && typeof entry === 'object') {
-          const record = entry as Record<string, unknown>;
-          return record.name ?? record.label ?? record.choice_name ?? record.item_name;
-        }
-        return '';
-      })
-      .filter(Boolean)
-      .join(', ');
-  }
 
   function cartItemsPayload() {
     return cart.map((line) => ({
@@ -421,6 +410,7 @@
         orderType: posDineInEnabled && !online ? orderType : null,
         tableNumber: posTableEnabled && !online ? posTableNumber : null,
         customerName: online ? onlineCustomer.trim() : posCustomerNameEnabled && customerName ? customerName : null,
+        cashReceived: !online && paymentMethod === 'CASH' && cashPaid >= totalDue ? cashPaid : null
       }));
       cart = [];
       discountCode = '';
@@ -453,16 +443,8 @@
     btError = '';
     try {
       const store = session.selectedStore;
-      const apiBase = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1').replace('/api/v1', '');
-      const rawLogo = store?.show_logo !== false ? (store?.logo_url ?? null) : null;
-      const logoUrl = rawLogo
-        ? (rawLogo.startsWith('http') ? rawLogo : apiBase + rawLogo)
-        : null;
-      const bytes = await buildReceiptBytes(receiptOrder, store?.name ?? 'Kasir', receiptCashPaid, {
-        header: store?.receipt_header,
-        footer: store?.receipt_footer,
-        logoUrl,
-      });
+      if (!store) return;
+      const bytes = await buildReceiptBytes(receiptOrder, store, receiptCashPaid);
       await printEscPos(bytes);
     } catch (err) {
       btError = err instanceof Error ? err.message : language.t('error');
@@ -1095,80 +1077,8 @@
       <div class="flex justify-end px-3 pt-3 print:hidden">
         <button class="icon-btn" onclick={closeReceipt} aria-label={language.t('close')}><span class="ms !text-[16px]" aria-hidden="true">close</span></button>
       </div>
-      <div class="receipt-head">
-        {#if session.selectedStore?.show_logo !== false && session.selectedStore?.logo_url}
-          <img src={session.selectedStore.logo_url} alt="logo" class="receipt-logo" />
-        {/if}
-        <div class="receipt-store">{session.selectedStore?.name ?? 'Kasir'}</div>
-        <div class="receipt-date">{formatDateTime(receiptOrder.created_at)}</div>
-        <div class="receipt-num">#{receiptOrder.order_number ?? receiptOrder.id}</div>
-        {#if session.selectedStore?.receipt_header?.trim()}
-          <div class="receipt-header-text">{session.selectedStore.receipt_header}</div>
-        {/if}
-      </div>
-
       <div class="receipt-body">
-        <div class="receipt-items">
-          {#each receiptOrder.items ?? [] as item}
-            {@const mods = [snapshotNames(item.options_snapshot), snapshotNames(item.addons_snapshot)].filter(Boolean).join(', ')}
-            <div class="receipt-item">
-              <div class="receipt-item-row">
-                <span>{item.item_name_snapshot} <span class="receipt-qty">×{item.quantity}</span></span>
-                <span>{formatRupiah(item.line_total ?? 0)}</span>
-              </div>
-              {#if mods}<div class="receipt-mods">{mods}</div>{/if}
-            {#if (item.item_discount_amount ?? 0) > 0}
-              <div class="receipt-item-discount">−{formatRupiah(item.item_discount_amount ?? 0)} {language.t('discounts')}</div>
-            {/if}
-            </div>
-          {/each}
-        </div>
-
-        <div class="receipt-totals">
-          {#if (receiptOrder.discount_amount ?? 0) > 0 || itemDiscountTotal > 0 || (receiptOrder.service_amount ?? 0) > 0 || (receiptOrder.pb1_amount ?? 0) > 0}
-            <div class="receipt-total-row">
-              <span>{language.t('subtotal')}</span><span>{formatRupiah(receiptOrder.subtotal ?? 0)}</span>
-            </div>
-          {/if}
-          {#if itemDiscountTotal > 0}
-            <div class="receipt-total-row receipt-total-row--discount">
-              <span>{language.t('discounts')}</span>
-              <span>−{formatRupiah(itemDiscountTotal)}</span>
-            </div>
-          {/if}
-          {#if (receiptOrder.discount_amount ?? 0) > 0}
-            <div class="receipt-total-row receipt-total-row--discount">
-              <span>{language.t('discounts')}{receiptOrder.discount_code_snapshot ? ` (${receiptOrder.discount_code_snapshot})` : ''}</span>
-              <span>−{formatRupiah(receiptOrder.discount_amount ?? 0)}</span>
-            </div>
-          {/if}
-          {#if (receiptOrder.service_amount ?? 0) > 0}
-            <div class="receipt-total-row"><span>{language.t('serviceLabel')}</span><span>{formatRupiah(receiptOrder.service_amount ?? 0)}</span></div>
-          {/if}
-          {#if (receiptOrder.pb1_amount ?? 0) > 0}
-            <div class="receipt-total-row"><span>{language.t('pb1Label')}</span><span>{formatRupiah(receiptOrder.pb1_amount ?? 0)}</span></div>
-          {/if}
-          <div class="receipt-total-row receipt-total-row--grand display-font">
-            <span>{language.t('total')}</span><span>{formatRupiah(receiptOrder.total_amount)}</span>
-          </div>
-          <div class="receipt-total-row">
-            <span>{language.t('payment')}</span><span class="font-bold">{receiptOrder.payment_method}</span>
-          </div>
-          {#if receiptCashPaid > 0}
-            <div class="receipt-total-row">
-              <span>{language.t('cash')}</span><span>{formatRupiah(receiptCashPaid)}</span>
-            </div>
-            <div class="receipt-total-row receipt-total-row--change">
-              <span>{language.t('change')}</span><span class="font-bold">{formatRupiah(receiptCashPaid - receiptOrder.total_amount)}</span>
-            </div>
-          {/if}
-        </div>
-
-        {#if session.selectedStore?.receipt_footer?.trim()}
-          <div class="receipt-thanks receipt-footer-text">{session.selectedStore.receipt_footer}</div>
-        {:else}
-          <div class="receipt-thanks">{language.t('thankYou')}</div>
-        {/if}
+        <ReceiptView lines={receiptLines} paper={receiptOpts.paper} />
       </div>
 
       {#if btError}
@@ -2085,27 +1995,7 @@
     background: white;
     box-shadow: 0 24px 64px rgba(0,0,0,0.4);
   }
-  .receipt-head {
-    padding: 24px 24px 20px;
-    text-align: center;
-    border-bottom: 2px dashed #e5e7eb;
-  }
-  .receipt-logo { display: block; max-height: 64px; max-width: 160px; object-fit: contain; margin: 0 auto 10px; }
-  .receipt-store { font-weight: 800; font-size: 1rem; color: var(--espresso); }
-  .receipt-date { font-size: 0.72rem; color: var(--text-muted); margin-top: 3px; }
-  .receipt-num { font-family: monospace; font-size: 0.82rem; font-weight: 700; margin-top: 6px; color: var(--dark); }
   .receipt-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
-  .receipt-items { display: flex; flex-direction: column; gap: 8px; }
-  .receipt-item-row { display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 700; }
-  .receipt-qty { font-weight: 400; color: var(--text-muted); }
-  .receipt-mods { font-size: 0.7rem; color: var(--text-muted); margin-top: 2px; }
-  .receipt-totals { margin-top: 16px; padding-top: 16px; border-top: 2px dashed #e5e7eb; display: flex; flex-direction: column; gap: 6px; }
-  .receipt-total-row { display: flex; justify-content: space-between; font-size: 0.82rem; color: var(--text-muted); }
-  .receipt-total-row--grand { font-size: 1.25rem; font-weight: 800; color: var(--espresso); padding-top: 8px; margin-top: 4px; border-top: 2px dashed #e5e7eb; }
-  .receipt-total-row--change { color: #15803d; }
-  .receipt-thanks { text-align: center; font-size: 0.78rem; color: var(--text-muted); margin-top: 20px; }
-  .receipt-header-text { font-size: 0.75rem; color: var(--text-muted); margin-top: 8px; white-space: pre-line; }
-  .receipt-footer-text { white-space: pre-line; }
   .receipt-bt-error {
     margin: 0 16px;
     padding: 8px 12px;
@@ -2414,8 +2304,6 @@
   .summary-row--discount { color: #16a34a; font-weight: 700; }
 
   /* ─── Discount display ─── */
-  .receipt-item-discount { font-size: 0.7rem; color: #16a34a; margin-top: 2px; font-weight: 700; }
-  .receipt-total-row--discount { color: #16a34a; }
   .cash-modal-subtotal-note { font-size: 0.68rem; color: #16a34a; font-weight: 700; margin-top: 2px; }
 
   /* ─── Utilities ─── */
@@ -2424,7 +2312,6 @@
 
   /* ─── Print ─── */
   @media print {
-    @page { size: 58mm auto; margin: 4mm 2mm; }
     :global(*) { visibility: hidden; }
     :global(.receipt-modal), :global(.receipt-modal *) { visibility: visible; }
     :global(.receipt-modal) {

@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin
@@ -26,11 +26,17 @@ class Store(Base, TimestampMixin):
     pos_table_count: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     pos_customer_name_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     kitchen_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    inventory_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # off: sales do not deduct ingredient stock, menu hidden
+    finance_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # off: Keuangan menu and shift chip hidden
     service_bp: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # service charge on dine-in, basis points
     pb1_bp: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # restaurant tax added to direct orders, basis points
     shift_variance_threshold: Mapped[int] = mapped_column(Integer, default=20000, nullable=False)
     default_float: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     tax_bp: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # tax included in online prices, basis points
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # paper width and what the customer receipt / kitchen ticket show; null = every default (schemas.store.ReceiptOptions)
+    receipt_options: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     receipt_header: Mapped[str | None] = mapped_column(Text, nullable=True)
     receipt_footer: Mapped[str | None] = mapped_column(Text, nullable=True)
 

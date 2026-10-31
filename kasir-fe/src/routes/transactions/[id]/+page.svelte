@@ -8,6 +8,8 @@
   import { formatDateTime, formatRupiah } from '$lib/utils/format';
   import { printEscPos, canPrint } from '$lib/utils/bluetooth-printer';
   import { buildKitchenTicketBytes, buildReceiptBytes } from '$lib/utils/escpos';
+  import ReceiptView from '$lib/components/ReceiptView.svelte';
+  import { customerReceipt, kitchenTicket, receiptOptions } from '$lib/utils/receipt';
 
   let order = $state<Order | null>(null);
   let error = $state('');
@@ -87,6 +89,10 @@
     }
   }
 
+  let receiptOpts = $derived(receiptOptions(session.selectedStore));
+  let receiptLines = $derived(order && session.selectedStore ? customerReceipt(order, session.selectedStore, receiptOpts) : []);
+  let ticketLines = $derived(order && session.selectedStore ? kitchenTicket(order, session.selectedStore, receiptOpts) : []);
+
   function openReceipt() { btError = ''; receiptOpen = true; }
   function closeReceipt() { receiptOpen = false; }
   function openTicket() { btError = ''; ticketOpen = true; }
@@ -100,7 +106,7 @@
     btPrinting = true;
     btError = '';
     try {
-      await printEscPos(buildKitchenTicketBytes(order, session.selectedStore?.name ?? 'Kasir', whereLabel(order)));
+      if (session.selectedStore) await printEscPos(await buildKitchenTicketBytes(order, session.selectedStore));
     } catch (err) {
       btError = err instanceof Error ? err.message : language.t('error');
     } finally {
@@ -114,12 +120,8 @@
     btError = '';
     try {
       const store = session.selectedStore;
-      const rawLogo = store?.show_logo !== false ? (store?.logo_url ?? null) : null;
-      const bytes = await buildReceiptBytes(order, store?.name ?? 'Kasir', 0, {
-        header: store?.receipt_header,
-        footer: store?.receipt_footer,
-        logoUrl: rawLogo
-      });
+      if (!store) return;
+      const bytes = await buildReceiptBytes(order, store);
       await printEscPos(bytes);
     } catch (err) {
       btError = err instanceof Error ? err.message : language.t('error');
@@ -306,10 +308,10 @@
         {/if}
       </div>
 
-      {#if order.staff_name}
+      {#if order.operator_name}
         <div class="card px-4 py-3">
           <div class="text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">{language.t('servedBy')}</div>
-          <div class="mt-1 font-bold text-[var(--espresso)]">{order.staff_name}</div>
+          <div class="mt-1 font-bold text-[var(--espresso)]">{order.operator_name}</div>
         </div>
       {/if}
     </div>
@@ -335,80 +337,8 @@
       <div class="no-print flex justify-end px-3 pt-3">
         <button class="grid h-8 w-8 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)] hover:text-[var(--espresso)]" onclick={closeReceipt} aria-label={language.t('close')}><span class="ms !text-[16px]" aria-hidden="true">close</span></button>
       </div>
-      <!-- Receipt content (printed) -->
-      <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5 text-center font-mono text-sm">
-        {#if session.selectedStore?.show_logo !== false && session.selectedStore?.logo_url}
-          <img src={session.selectedStore.logo_url} alt="logo" class="mx-auto mb-2 h-12 w-auto object-contain" />
-        {/if}
-        <div class="text-base font-bold">{session.selectedStore?.name ?? 'Kasir'}</div>
-        {#if session.selectedStore?.receipt_header?.trim()}
-          <div class="mt-1 text-xs text-gray-500">{session.selectedStore.receipt_header}</div>
-        {/if}
-        <div class="mt-2 text-xs text-gray-500">{formatDateTime(order.created_at)}</div>
-        <div class="text-xs font-bold">#{order.order_number ?? order.id}</div>
-
-        <div class="my-3 border-t border-dashed border-gray-300"></div>
-
-        <div class="space-y-1.5 text-left">
-          {#each order.items ?? [] as item}
-            {@const mods = [snapshotNames(item.options_snapshot), snapshotNames(item.addons_snapshot)].filter(Boolean).join(', ')}
-            <div>
-              <div class="flex justify-between gap-2">
-                <span class="font-bold">{item.item_name_snapshot} <span class="font-normal text-gray-500">×{item.quantity}</span></span>
-                <span class="shrink-0">{formatRupiah(item.line_total ?? 0)}</span>
-              </div>
-              {#if mods}<div class="text-xs text-gray-400">{mods}</div>{/if}
-              {#if (item.item_discount_amount ?? 0) > 0}
-                <div class="text-xs text-red-500">–{formatRupiah(item.item_discount_amount ?? 0)} {language.t('discounts')}</div>
-              {/if}
-            </div>
-          {/each}
-        </div>
-
-        <div class="my-3 border-t border-dashed border-gray-300"></div>
-
-        <div class="space-y-1 text-left text-xs">
-          {#if discountAmount > 0 || itemDiscountTotal > 0 || (order.service_amount ?? 0) > 0 || (order.pb1_amount ?? 0) > 0}
-            <div class="flex justify-between">
-              <span class="text-gray-500">{language.t('subtotal')}</span>
-              <span>{formatRupiah(subtotal)}</span>
-            </div>
-          {/if}
-          {#if itemDiscountTotal > 0}
-            <div class="flex justify-between text-red-500">
-              <span>{language.t('discounts')}</span>
-              <span>–{formatRupiah(itemDiscountTotal)}</span>
-            </div>
-          {/if}
-          {#if discountAmount > 0}
-            <div class="flex justify-between text-red-500">
-              <span>{language.t('discounts')}{order.discount_code_snapshot ? ` (${order.discount_code_snapshot})` : ''}</span>
-              <span>–{formatRupiah(discountAmount)}</span>
-            </div>
-          {/if}
-          {#if (order.service_amount ?? 0) > 0}
-            <div class="flex justify-between"><span class="text-gray-500">{language.t('serviceLabel')}</span><span>{formatRupiah(order.service_amount ?? 0)}</span></div>
-          {/if}
-          {#if (order.pb1_amount ?? 0) > 0}
-            <div class="flex justify-between"><span class="text-gray-500">{language.t('pb1Label')}</span><span>{formatRupiah(order.pb1_amount ?? 0)}</span></div>
-          {/if}
-          <div class="flex justify-between border-t border-dashed border-gray-300 pt-1 text-base font-bold">
-            <span>{language.t('total')}</span>
-            <span>{formatRupiah(order.total_amount)}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-gray-500">{language.t('payment')}</span>
-            <span class="font-bold">{order.payment_method}</span>
-          </div>
-        </div>
-
-        <div class="my-3 border-t border-dashed border-gray-300"></div>
-
-        {#if session.selectedStore?.receipt_footer?.trim()}
-          <div class="text-xs text-gray-500">{session.selectedStore.receipt_footer}</div>
-        {:else}
-          <div class="text-xs text-gray-500">{language.t('thankYou')}</div>
-        {/if}
+      <div class="min-h-0 flex-1 overflow-y-auto px-4 py-5">
+        <ReceiptView lines={receiptLines} paper={receiptOpts.paper} />
       </div>
 
       {#if btError}
@@ -435,30 +365,8 @@
       <div class="no-print flex justify-end px-3 pt-3">
         <button class="grid h-8 w-8 place-items-center rounded-xl border border-[var(--border)] text-[var(--text-muted)] transition hover:bg-[var(--cream)]" onclick={closeTicket} aria-label={language.t('close')}><span class="ms !text-[16px]" aria-hidden="true">close</span></button>
       </div>
-      <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5 font-mono text-sm">
-        <div class="text-center">
-          <div class="text-base font-bold">{language.t('txTicket').toUpperCase()}</div>
-          <div class="text-xs text-gray-500">{session.selectedStore?.name ?? 'Kasir'}</div>
-          <div class="my-1 text-2xl font-bold">#{order.order_number ?? order.id.slice(0, 8)}</div>
-          <div class="text-xs text-gray-500">{formatDateTime(order.created_at)}</div>
-        </div>
-        <div class="my-3 border-t border-dashed border-gray-300"></div>
-        <div class="font-bold">{whereLabel(order)}</div>
-        {#if order.customer_name}<div>{order.customer_name}</div>{/if}
-        <div class="my-3 border-t border-dashed border-gray-300"></div>
-        <div class="space-y-2">
-          {#each order.items ?? [] as item}
-            {@const left = item.quantity - (item.void_qty ?? 0)}
-            {@const mods = [snapshotNames(item.options_snapshot), snapshotNames(item.addons_snapshot)].filter(Boolean).join(', ')}
-            {#if left > 0}
-              <div><div class="font-bold">{left}× {item.item_name_snapshot}</div>{#if mods}<div class="pl-5 text-xs text-gray-500">{mods}</div>{/if}</div>
-            {/if}
-          {/each}
-        </div>
-        {#if order.notes?.trim()}
-          <div class="my-3 border-t border-dashed border-gray-300"></div>
-          <div class="text-xs"><span class="font-bold">{language.t('txTicketNote')}:</span> {order.notes}</div>
-        {/if}
+      <div class="min-h-0 flex-1 overflow-y-auto px-4 py-5">
+        <ReceiptView lines={ticketLines} paper={receiptOpts.paper} />
       </div>
       {#if btError}<div class="px-5 pb-2 text-center text-xs text-red-600">{btError}</div>{/if}
       <div class="no-print flex gap-2 border-t border-[var(--border)] p-4">

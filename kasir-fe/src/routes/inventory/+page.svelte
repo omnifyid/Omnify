@@ -5,6 +5,7 @@
   import type { Ingredient, IngredientSummary, PaginatedResponse, StockMovement } from '$lib/api/types';
   import type { MessageKey } from '$lib/i18n/messages';
   import { language } from '$lib/i18n/language.svelte';
+  import { goto } from '$app/navigation';
   import { session } from '$lib/stores/session.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
   import { chip, CHIP_ROW, seg, SEG_GROUP } from '$lib/utils/ui';
@@ -285,6 +286,11 @@
   });
 
   const TABS: [Tab, MessageKey][] = [['stock', 'invStock'], ['opname', 'invOpname'], ['movements', 'invMovements']];
+
+  // module switched off in Settings: leave the page
+  $effect(() => {
+    if (session.selectedStore?.inventory_enabled === false) void goto('/dashboard');
+  });
 </script>
 
 <svelte:head><title>{language.t('inventory')} | Omnify</title></svelte:head>

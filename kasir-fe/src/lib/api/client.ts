@@ -5,7 +5,7 @@ const MEDIA_ORIGIN = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
 
 export function mediaUrl(url: string | null | undefined): string | null {
   if (!url) return null;
-  if (url.startsWith('http')) return url;
+  if (/^(https?:|blob:|data:)/.test(url)) return url;
   return `${MEDIA_ORIGIN}${url}`;
 }
 

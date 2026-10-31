@@ -34,6 +34,7 @@ describe('toOrderPayload', () => {
       channel: null,
       channel_order_id: null,
       app_total: null,
+      cash_received: null,
       driver_name: null
     });
   });

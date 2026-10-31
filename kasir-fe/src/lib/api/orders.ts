@@ -19,6 +19,7 @@ export function toOrderPayload(input: {
   channelOrderId?: string | null;
   appTotal?: number | null;
   driverName?: string | null;
+  cashReceived?: number | null;
 }) {
   return {
     payment_method: input.channel ? undefined : input.paymentMethod,
@@ -36,6 +37,7 @@ export function toOrderPayload(input: {
     channel: input.channel ?? null,
     channel_order_id: input.channelOrderId?.trim() || null,
     app_total: input.appTotal ?? null,
+    cash_received: input.cashReceived ?? null,
     driver_name: input.driverName?.trim() || null
   };
 }
